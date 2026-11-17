@@ -194,6 +194,23 @@ pojie whoami -b          # 放在子命令后也行
 - 跨域请求（360/Bing 搜索）同源策略挡不住，自动回退到 curl 指纹会话，此时按游客态处理；
 - App 未登录时行为与游客一致（只能看第 1 页、看不到私密版块）。
 
+### 桌面端（Windows / macOS / Linux）
+
+没有 Minis App 的 WebView 可借时，`-b` 自动改用**本机浏览器**：Selenium 驱动
+Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执行同一段 fetch 脚本，
+登录态由浏览器自己的 profile 携带。
+
+```bash
+pojie setup --with-selenium     # 装 selenium
+pojie auth                      # 打开本机浏览器人工登录（含人机验证）
+pojie -b threads -f 10          # 复用同一 profile 的登录态
+```
+
+- `auth` 与 `-b` 共用 `~/.52pojie/browser-profile`，登录一次长期有效；
+- 浏览器选择顺序：系统默认浏览器 → Chrome → Edge → Brave → Firefox；
+- 已装 chromedriver 时直接用本机的，不去网上抓版本；
+- 跨域请求（搜索引擎）仍回退到 curl 指纹会话。
+
 ## 已知限制
 
 - **站内搜索已被站点废弃**：`search.php` 一律 302 到 Bing，且 Bing 对本站几乎无索引，所以 `search` 改走 360/Bing 外链解析。找具体帖子首选 `threads --grep` / `latest --grep` 本地过滤。

@@ -11,6 +11,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 import urllib.parse
@@ -49,6 +50,7 @@ ERR = sys.stderr
 # --------------------------------------------------------------------------- #
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _store
+import _browser_local
 import _browser
 
 try:
@@ -135,6 +137,26 @@ def _iter_cookies(container):
                    getattr(c, "domain", ""), getattr(c, "path", "/"))
 
 
+def browser_profile_dir(home):
+    """浏览器 profile 目录：auth 与传输层共用，登录态才能传递。"""
+    return os.path.join(home or DEFAULT_HOME, "browser-profile")
+
+
+def _browser_session(home):
+    """挑一个可用的浏览器传输层后端。
+
+    优先用 Minis App 内已登录的 WebView（Android），没有就退回本机浏览器
+    （桌面端），两者提供同一个"页内 fetch"能力。
+    """
+    if shutil.which("minis-browser-use"):
+        try:
+            return _browser.BrowserSession(BASE)
+        except Exception:
+            pass
+    return _browser_local.LocalBrowserSession(
+        BASE, profile_dir=browser_profile_dir(home))
+
+
 class Client:
     """带 cookie 持久化与限速的 52pojie 会话。"""
 
@@ -159,7 +181,7 @@ class Client:
         # WebView 发请求，登录态由 App 携带，客户端不存 cookie
         self.transport = transport
         if transport == "browser":
-            self.s = _browser.BrowserSession(BASE)
+            self.s = _browser_session(home)
         else:
             # 所有请求共用同一个带 Chrome 指纹的会话
             self.s = _http.Session(impersonate=IMPERSONATE)
@@ -1673,148 +1695,6 @@ def cmd_logout(args, cl):
 # --------------------------------------------------------------------------- #
 # 浏览器登录（auth）：打开本机浏览器，人工登录，工具自动回收 cookie
 # --------------------------------------------------------------------------- #
-BROWSER_PATHS = {
-    "chrome": [
-        r"Google\Chrome\Application\chrome.exe",
-        r"Chromium\Application\chrome.exe",
-        r"Google\Chrome for Testing\chrome.exe",
-    ],
-    "edge": [r"Microsoft\Edge\Application\msedge.exe"],
-    "firefox": [r"Mozilla Firefox\firefox.exe"],
-    "brave": [r"BraveSoftware\Brave-Browser\Application\brave.exe"],
-}
-
-
-def find_browsers():
-    """检测本机可用浏览器，返回 [(key, 路径)]。"""
-    import shutil
-    found = []
-    seen = set()
-
-    def add(key, path):
-        if not path:
-            return
-        path = os.path.abspath(path)
-        low = path.lower()
-        if low in seen or not os.path.exists(path):
-            return
-        seen.add(low)
-        found.append((key, path))
-
-    # 1) 注册表 App Paths（能找到装在自定义盘符的浏览器）
-    try:
-        import winreg
-        for scope in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-            for key in ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"):
-                try:
-                    with winreg.OpenKey(
-                            scope,
-                            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\%s"
-                            % key) as k:
-                        val, _ = winreg.QueryValueEx(k, None)
-                        if val:
-                            base = {"chrome.exe": "chrome", "msedge.exe": "edge",
-                                    "firefox.exe": "firefox",
-                                    "brave.exe": "brave"}[key]
-                            add(base, val)
-                except OSError:
-                    continue
-    except ImportError:
-        pass
-
-    # 2) 常见安装目录
-    roots = [os.environ.get("ProgramFiles", ""),
-             os.environ.get("ProgramFiles(x86)", ""),
-             os.environ.get("LOCALAPPDATA", ""),
-             os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")]
-    for key, rels in BROWSER_PATHS.items():
-        for root in roots:
-            if not root:
-                continue
-            for rel in rels:
-                add(key, os.path.join(root, rel))
-
-    # 3) PATH
-    for key in BROWSER_PATHS:
-        exe = {"chrome": "chrome", "edge": "msedge", "firefox": "firefox",
-               "brave": "brave"}[key]
-        add(key, shutil.which(exe))
-    return found
-
-
-def _make_driver(browser_key, browser_path, profile_dir, proxy=None):
-    """按浏览器类型构造 selenium driver。"""
-    from selenium import webdriver
-    if browser_key == "firefox":
-        opts = webdriver.FirefoxOptions()
-        if proxy:
-            opts.add_argument("--proxy-server=%s" % proxy)
-        return webdriver.Firefox(options=opts)
-    if browser_key == "edge":
-        opts = webdriver.EdgeOptions()
-    else:
-        opts = webdriver.ChromeOptions()
-    opts.add_argument("--start-maximized")
-    if profile_dir:
-        opts.add_argument("--user-data-dir=%s" % profile_dir)
-    if proxy:
-        opts.add_argument("--proxy-server=%s" % proxy)
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    if browser_key == "edge":
-        return webdriver.Edge(options=opts)
-    return webdriver.Chrome(options=opts)
-
-
-def import_cookie_text(cl, txt):
-    """把「a=1; b=2」整行 Cookie 灌进会话并落库。"""
-    if txt.lower().startswith("cookie:"):
-        txt = txt.split(":", 1)[1]
-    host = urllib.parse.urlparse(BASE).hostname
-    n = 0
-    for part in txt.split(";"):
-        if "=" not in part:
-            continue
-        k, v = part.split("=", 1)
-        k, v = k.strip(), v.strip()
-        if not k:
-            continue
-        for dom in ("." + host, host):
-            try:
-                cl.s.cookies.set(k, v, domain=dom, path="/")
-            except Exception:
-                pass
-        n += 1
-    if n:
-        cl.save_cookies()
-    return n
-
-
-def paste_cookie_login(cl, prompt_hint=True):
-    """没有浏览器可用时的登录方式：让用户从浏览器 F12 复制 Cookie 过来。"""
-    if prompt_hint:
-        info("没有可用浏览器，改用粘贴 Cookie（任何浏览器都行）：")
-        info("  1) 用任意浏览器打开 %s 并登录" % BASE)
-        info("  2) F12 → 网络(Network) → 刷新页面 → 点任一请求")
-        info("  3) 请求头里找到 Cookie，整行复制（形如 htVC_2132_auth=...; ...）")
-        info("  4) 粘到下面回车（粘贴时看不到回显是正常的，粘完直接回车）")
-    try:
-        txt = input("Cookie: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        txt = ""
-    if not txt:
-        die("没有收到 Cookie。也可以直接：pojie login --cookie \"<整行 Cookie>\"")
-    n = import_cookie_text(cl, txt)
-    if not n:
-        die("这串 Cookie 解析不出任何键值对，请确认复制的是 Cookie 整行")
-    who = cl.logged_in()
-    if who:
-        info("已保存 %d 条 cookie，登录成功：%s" % (n, who))
-        return 0
-    info("已保存 %d 条 cookie，但没识别到登录态——请确认复制时已登录，且包含 *_auth。" % n)
-    return 1
-
-
 def cmd_auth(args, cl):
     """打开本机浏览器，人工登录后自动回收 cookie。"""
     try:
@@ -1822,7 +1702,7 @@ def cmd_auth(args, cl):
     except ImportError:
         die("需要 selenium：pip install selenium")
 
-    browsers = find_browsers()
+    browsers = _browser_local.find_browsers()
     if getattr(args, "paste", False):
         return paste_cookie_login(cl)
     info("检测方式：注册表 App Paths → 常见安装目录 → PATH，结果：")
@@ -1858,15 +1738,16 @@ def cmd_auth(args, cl):
         os.environ.setdefault("SE_CACHE", cache)
     except Exception:
         pass
-    profile = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           ".browser-profile")
+    # 与传输层共用同一 profile，登录态才能被 -b 复用
+    profile = browser_profile_dir(cl.home)
     try:
         os.makedirs(profile, exist_ok=True)
     except Exception:
         profile = None
 
     info("正在打开浏览器登录页，请在窗口里自行完成登录（含人机验证）…")
-    drv = _make_driver(key, path, profile, proxy=args.proxy)
+    drv = _browser_local.make_driver(key, path, profile,
+                                    proxy=args.proxy)
     try:
         drv.get(BASE + "/member.php?mod=logging&action=login")
         deadline = time.time() + args.timeout
@@ -1932,6 +1813,8 @@ def cmd_setup(args, cl):
     """自动安装依赖：python -m pip install curl_cffi beautifulsoup4"""
     import subprocess
     pkgs = ["curl_cffi", "beautifulsoup4"]
+    if getattr(args, "with_selenium", False):
+        pkgs.append("selenium")
     mirrors = [("国内镜像", ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]),
                ("官方源", [])]
     for label, extra in mirrors:
@@ -2018,6 +1901,8 @@ def build_parser():
     # 下面统一给每个子命令也挂上 -b/--browser（放在子命令后也能用）
 
     s = sub.add_parser("setup", help="安装/检查依赖包")
+    s.add_argument("--with-selenium", action="store_true",
+                   help="一并安装 selenium（本地浏览器传输层需要）")
 
     s = sub.add_parser("forums", help="列出板块")
     s.add_argument("--grep", default=None, help="按名称过滤板块")
