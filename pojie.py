@@ -1695,6 +1695,55 @@ def cmd_logout(args, cl):
 # --------------------------------------------------------------------------- #
 # 浏览器登录（auth）：打开本机浏览器，人工登录，工具自动回收 cookie
 # --------------------------------------------------------------------------- #
+def import_cookie_text(cl, txt):
+    """把「a=1; b=2」整行 Cookie 灌进会话并落库。"""
+    if txt.lower().startswith("cookie:"):
+        txt = txt.split(":", 1)[1]
+    host = urllib.parse.urlparse(BASE).hostname
+    n = 0
+    for part in txt.split(";"):
+        if "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not k:
+            continue
+        for dom in ("." + host, host):
+            try:
+                cl.s.cookies.set(k, v, domain=dom, path="/")
+            except Exception:
+                pass
+        n += 1
+    if n:
+        cl.save_cookies()
+    return n
+
+
+def paste_cookie_login(cl, prompt_hint=True):
+    """没有浏览器可用时的登录方式：让用户从浏览器 F12 复制 Cookie 过来。"""
+    if prompt_hint:
+        info("没有可用浏览器，改用粘贴 Cookie（任何浏览器都行）：")
+        info("  1) 用任意浏览器打开 %s 并登录" % BASE)
+        info("  2) F12 → 网络(Network) → 刷新页面 → 点任一请求")
+        info("  3) 请求头里找到 Cookie，整行复制（形如 htVC_2132_auth=...; ...）")
+        info("  4) 粘到下面回车（粘贴时看不到回显是正常的，粘完直接回车）")
+    try:
+        txt = input("Cookie: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        txt = ""
+    if not txt:
+        die("没有收到 Cookie。也可以直接：pojie login --cookie \"<整行 Cookie>\"")
+    n = import_cookie_text(cl, txt)
+    if not n:
+        die("这串 Cookie 解析不出任何键值对，请确认复制的是 Cookie 整行")
+    who = cl.logged_in()
+    if who:
+        info("已保存 %d 条 cookie，登录成功：%s" % (n, who))
+        return 0
+    info("已保存 %d 条 cookie，但没识别到登录态——请确认复制时已登录，且包含 *_auth。" % n)
+    return 1
+
+
 def cmd_auth(args, cl):
     """打开本机浏览器，人工登录后自动回收 cookie。"""
     try:
