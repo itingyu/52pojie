@@ -2002,6 +2002,8 @@ def build_parser():
     p.add_argument("--transport", choices=["curl", "browser"], default="curl",
                    help="curl=本地直连（curl_cffi 指纹）；"
                         "browser=借道 App 内已登录的 WebView 发请求")
+    p.add_argument("-b", "--browser", action="store_true",
+                   help="等价 --transport browser：借道 App 内已登录的 WebView")
     p.add_argument("--delay", type=float, default=None,
                    help="请求间隔基准秒（默认在 %.1f-%.1f 秒间随机取值）"
                         % (DELAY_MIN, DELAY_MAX))
@@ -2016,6 +2018,7 @@ def build_parser():
     p.add_argument("--no-color", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--width", type=int, default=None, help="输出宽度（默认取终端宽度）")
     sub = p.add_subparsers(dest="cmd", metavar="<命令>")
+    # 下面统一给每个子命令也挂上 -b/--browser（放在子命令后也能用）
 
     s = sub.add_parser("setup", help="安装/检查依赖包")
 
@@ -2103,6 +2106,14 @@ def build_parser():
     sub.add_parser("whoami", help="查看登录状态")
     sub.add_parser("logout", help="清除本地登录状态")
 
+    for _sp in sub.choices.values():
+        # login 子命令已有 --browser（人工浏览器登录），不重复挂
+        if any("--browser" in a.option_strings for a in _sp._actions):
+            continue
+        _sp.add_argument("-b", "--browser", action="store_true",
+                         default=argparse.SUPPRESS,
+                         help="借道 App 内已登录的 WebView 发请求")
+
     return p
 
 
@@ -2150,7 +2161,8 @@ def main(argv=None):
     check_deps()
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
                 delay_min=args.delay_min, delay_max=args.delay_max,
-                transport=getattr(args, "transport", "curl"))
+                transport=("browser" if getattr(args, "browser", False)
+                           else getattr(args, "transport", "curl")))
     if args.cmd == "setup":
         return cmd_setup(args, None)
     fn = {

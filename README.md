@@ -121,7 +121,7 @@ pojie thread --pager
 --width 80      指定输出宽度（默认取终端宽度）
 --delay-min / --delay-max    请求间隔区间，默认 0.7~1.3 秒随机
 --delay 1.0     设基准值，等价 0.75~1.5 秒
---transport browser   借道 Minis App 内已登录的 WebView 发请求（Android）
+-b, --browser   借道 Minis App 内已登录的 WebView 发请求（等价 --transport browser，可放在子命令前后）
 ```
 
 例：
@@ -174,13 +174,14 @@ pojie auth --paste          # 直接走粘贴模式（也可以省略，检测�
 pojie login --cookie "htVC_2132_auth=...; htVC_2132_saltkey=..."
 ```
 
-## 浏览器传输模式（--transport browser）
+## 浏览器传输模式（-b / --transport browser）
 
 在 Minis App（Android）里，可以不导 cookie，直接借用 App 内已登录的 WebView 发请求：
 
 ```bash
-pojie --transport browser threads -f 10
-pojie --transport browser whoami
+pojie -b threads -f 10
+pojie -b whoami
+pojie whoami -b          # 放在子命令后也行
 ```
 
 原理与边界：
