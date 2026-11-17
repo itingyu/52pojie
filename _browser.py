@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """浏览器传输层：把 HTTP 请求交给 Minis App 里的 WebView 执行。
 
-为什么需要它：52pojie 的登录 cookie 是 HttpOnly，只有 App 进程内的
+为什么需要它：52pj 的登录 cookie 是 HttpOnly，只有 App 进程内的
 CookieManager 能读到，而 App 对外暴露的 get_cookies 只给截断预览
 （BrowserUseManager.kt 里 value.take(77)+"…"），沙箱拿不到完整串。
 

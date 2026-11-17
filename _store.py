@@ -8,7 +8,7 @@ import os
 import sqlite3
 import time
 
-DB_NAME = "pojie.db"
+DB_NAME = "52pj.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (

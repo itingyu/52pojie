@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "52pojie"
+name = "52pj"
 version = "1.0.0"
 description = "52pojie.cn (吾爱破解) 命令行阅读器"
 readme = "README.md"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-52pojie = "pojie:main"
+52pj = "pojie:main"
 
 [tool.setuptools]
 py-modules = ["pojie", "_ui", "_pager", "_store", "_browser", "_browser_local"]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""52pojie —— 52pojie.cn（吾爱破解）命令行客户端
+"""52pj —— 52pojie.cn（吾爱破解）命令行客户端
 
 只读浏览工具：列板块 / 列帖子 / 看帖（含楼层回复）/ 搜索 / 登录看私密内容
 依赖：curl_cffi（强制 Chrome TLS 指纹）, beautifulsoup4
@@ -39,7 +39,7 @@ DELAY_MAX = 1.3
 # 固定走 curl_cffi 的 Chrome TLS/JA3 指纹；UA 也由它按 profile 自动对齐，
 # 手写 UA 反而会和 TLS 指纹对不上
 IMPERSONATE = os.environ.get("POJIE_IMPERSONATE") or "chrome"
-DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".52pojie")
+DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".52pj")
 HOME = DEFAULT_HOME
 
 ERR = sys.stderr
@@ -158,7 +158,7 @@ def _browser_session(home):
 
 
 class Client:
-    """带 cookie 持久化与限速的 52pojie 会话。"""
+    """带 cookie 持久化与限速的 52pj 会话。"""
 
     def __init__(self, home=DEFAULT_HOME, delay=None, cookie_file=None,
                  delay_min=None, delay_max=None, transport="curl"):
@@ -815,7 +815,7 @@ def cmd_threads(args, cl):
                 _ui.out(_ui.c("序号 %s → 板块列表：%s" %
                               (args.fid, (label or "")[:40]), "grey"))
             else:
-                die("板块列表里没有序号 %s。先运行 52pojie forums 看看。" % args.fid)
+                die("板块列表里没有序号 %s。先运行 52pj forums 看看。" % args.fid)
         if fid is None:
             fid = resolve_fid(cl, args.fid)
     else:
@@ -1359,7 +1359,7 @@ def _search_bing(cl, keyword, page=1):
 def cmd_search(args, cl):
     """搜索帖子。
 
-    站点把站内搜索整体重定向到了 Bing，而 Bing 对 52pojie 的帖子页几乎没有索引，
+    站点把站内搜索整体重定向到了 Bing，而 Bing 对 52pj 的帖子页几乎没有索引，
     所以这里改为直接查外部搜索引擎（360 优先，Bing 兜底）并解析出帖子链接。
     """
     engines = {
@@ -1654,9 +1654,9 @@ def cmd_login(args, cl):
         token = args.token
         if not token:
             info("站点启用了 Cloudflare Turnstile 人机验证，任选其一：")
-            info("  1) 52pojie login --browser --username %s  （自动开 Chrome，点一下验证）" % username)
-            info("  2) 在浏览器登录论坛后：52pojie login --cookie \"<Cookie 串>\"")
-            info("  3) 自备 Turnstile token：52pojie login --token <token>")
+            info("  1) 52pj login --browser --username %s  （自动开 Chrome，点一下验证）" % username)
+            info("  2) 在浏览器登录论坛后：52pj login --cookie \"<Cookie 串>\"")
+            info("  3) 自备 Turnstile token：52pj login --token <token>")
             return 2
         submit_turnstile_token(cl, idhash, token)
         info("Turnstile token 已提交。")
@@ -1732,7 +1732,7 @@ def paste_cookie_login(cl, prompt_hint=True):
     except (EOFError, KeyboardInterrupt):
         txt = ""
     if not txt:
-        die("没有收到 Cookie。也可以直接：52pojie login --cookie \"<整行 Cookie>\"")
+        die("没有收到 Cookie。也可以直接：52pj login --cookie \"<整行 Cookie>\"")
     n = import_cookie_text(cl, txt)
     if not n:
         die("这串 Cookie 解析不出任何键值对，请确认复制的是 Cookie 整行")
@@ -1816,7 +1816,7 @@ def cmd_auth(args, cl):
                 break
         if not auth:
             die("等待超时（%d 秒）未检测到登录态。可加大 --timeout，"
-                "或改用 52pojie login --cookie \"<Cookie 串>\" 导入。" % args.timeout)
+                "或改用 52pj login --cookie \"<Cookie 串>\" 导入。" % args.timeout)
         for c in drv.get_cookies():
             cl.s.cookies.set(c["name"], c["value"], domain=c.get("domain"),
                              path=c.get("path", "/"))
@@ -1884,27 +1884,27 @@ def cmd_setup(args, cl):
 
 
 EXAMPLES = """交互式浏览（选定一次，之后命令都作用于它）：
-  52pojie select 病毒分析              选定板块（也可写 fid：select 32）
-  52pojie threads                     直接列该板块的帖子
-  52pojie select 2137132              选定帖子（也可粘整条网址）
-  52pojie thread                      直接看这个帖子
-  52pojie thread --pager              交互式阅读：方向键/PgUp·PgDn 翻阅，读到底自动加载下一页
-  52pojie thread --next / --prev      翻页（会记住页码）
-  52pojie status                      看当前选中了两个什么
-  52pojie select --clear              清除选择
+  52pj select 病毒分析              选定板块（也可写 fid：select 32）
+  52pj threads                     直接列该板块的帖子
+  52pj select 2137132              选定帖子（也可粘整条网址）
+  52pj thread                      直接看这个帖子
+  52pj thread --pager              交互式阅读：方向键/PgUp·PgDn 翻阅，读到底自动加载下一页
+  52pj thread --next / --prev      翻页（会记住页码）
+  52pj status                      看当前选中了两个什么
+  52pj select --clear              清除选择
 
 常用例子：
-  52pojie forums                      列出所有版块
-  52pojie threads --fid 32            看「病毒分析区」的帖子
-  52pojie threads -f 水漫金山 --grep 求助   板块名可以直接写，还能过滤
-  52pojie latest --grep 勒索          全站新帖里找含"勒索"的
-  52pojie thread 2137132              看帖子正文和各楼回复
-  52pojie thread https://www.52pojie.cn/thread-2137132-1-1.html   直接粘网址
-  52pojie threads -f 32 --no-pin      不看置顶，只看真实新帖
-  52pojie thread 2137132 --op --all   只看楼主（扫全部页）
-  52pojie search 银狐                 搜索（走 360/Bing）
-  52pojie auth                        打开浏览器登录，自动收回 cookie
-  52pojie whoami                      看登录状态
+  52pj forums                      列出所有版块
+  52pj threads --fid 32            看「病毒分析区」的帖子
+  52pj threads -f 水漫金山 --grep 求助   板块名可以直接写，还能过滤
+  52pj latest --grep 勒索          全站新帖里找含"勒索"的
+  52pj thread 2137132              看帖子正文和各楼回复
+  52pj thread https://www.52pojie.cn/thread-2137132-1-1.html   直接粘网址
+  52pj threads -f 32 --no-pin      不看置顶，只看真实新帖
+  52pj thread 2137132 --op --all   只看楼主（扫全部页）
+  52pj search 银狐                 搜索（走 360/Bing）
+  52pj auth                        打开浏览器登录，自动收回 cookie
+  52pj whoami                      看登录状态
 
 全局开关（放命令前后都行）：
   --json         输出 JSON，便于脚本处理
@@ -1928,9 +1928,9 @@ def normalize_tid(s):
 
 def build_parser():
     p = argparse.ArgumentParser(
-        prog="52pojie", description="52pojie.cn（吾爱破解）命令行阅读器",
+        prog="52pj", description="52pojie.cn（吾爱破解）命令行阅读器",
         epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pojie）")
+    p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pj）")
     p.add_argument("-b", "--browser", action="store_true",
                    help="借道 App 内已登录的 WebView 发请求（默认本地直连）")
     p.add_argument("--delay", type=float, default=None,
@@ -2059,7 +2059,7 @@ def main(argv=None):
         st = load_state(args.home)
         fid, bname = get_sel_board(st)
         tid, tpage, ttitle = get_sel_thread(st)
-        _ui.out(_ui.c("52pojie 命令行阅读器", "bold"))
+        _ui.out(_ui.c("52pj 命令行阅读器", "bold"))
         _ui.out()
         if fid:
             _ui.out("  板块  " + _ui.c(bname or "", "cyan") + _ui.c("  fid %s" % fid, "grey"))
@@ -2075,7 +2075,7 @@ def main(argv=None):
         _ui.out(_ui.c("  thread             看正文（--next/--prev 翻页）", "grey"))
         _ui.out(_ui.c("  status / forums / latest / search / auth", "grey"))
         _ui.out()
-        _ui.out(_ui.c("  完整说明：52pojie --help", "grey"))
+        _ui.out(_ui.c("  完整说明：52pj --help", "grey"))
         return 0
     # 全局显示选项
     if getattr(args, "color", False):

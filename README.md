@@ -1,4 +1,4 @@
-# pojie — 52pojie.cn 命令行阅读器
+# 52pj — 52pojie.cn 命令行阅读器
 
 纯 Python（3.8+），零外部依赖即可运行核心逻辑；美化输出、支持 JSON。
 
@@ -11,33 +11,33 @@ python pojie.py setup          # 装依赖：curl_cffi / beautifulsoup4
 或标准 Python 方式：
 
 ```bash
-pip install .                  # 装成命令，之后直接用 52pojie
+pip install .                  # 装成命令，之后直接用 52pj
 ```
 
-`52pojie.bat` 是给 Windows 的薄壳，内部就是 `python pojie.py %*`。
+`52pj.bat` 是给 Windows 的薄壳，内部就是 `python pojie.py %*`。
 
 ## 选定上下文（推荐用法）
 
 先选一次，之后命令都作用于它，不用反复传参数：
 
 ```bash
-52pojie select 病毒分析      # 选定板块（也可写 fid：select 32）
-52pojie threads              # 直接列出该板块帖子
-52pojie select 2137132       # 选定帖子（也可粘整条网址）
-52pojie thread               # 直接看正文
-52pojie thread --next        # 下一页（页码会被记住）
-52pojie thread --prev        # 上一页
-52pojie thread --op          # 只看楼主（同样作用于当前帖子）
-52pojie status               # 看当前选中了什么
-52pojie select --clear       # 清除选择
+52pj select 病毒分析      # 选定板块（也可写 fid：select 32）
+52pj threads              # 直接列出该板块帖子
+52pj select 2137132       # 选定帖子（也可粘整条网址）
+52pj thread               # 直接看正文
+52pj thread --next        # 下一页（页码会被记住）
+52pj thread --prev        # 上一页
+52pj thread --op          # 只看楼主（同样作用于当前帖子）
+52pj status               # 看当前选中了什么
+52pj select --clear       # 清除选择
 ```
 
-选择存在 `~/.52pojie/state.json`，跨命令、跨会话保留。
+选择存在 `~/.52pj/state.json`，跨命令、跨会话保留。
 
 ### 交互式阅读器的按键
 
 ```bash
-52pojie thread --pager
+52pj thread --pager
 ```
 
 | 按键 | 作用 |
@@ -64,7 +64,7 @@ pip install .                  # 装成命令，之后直接用 52pojie
 
 ```
 共 48 条 · thread <TID> 看正文
-等价命令  52pojie.bat threads -f 10 --no-pin
+等价命令  52pj.bat threads -f 10 --no-pin
 （已把「『水漫金山』」记为当前选择）
 ```
 
@@ -79,7 +79,7 @@ pip install .                  # 装成命令，之后直接用 52pojie
    TID 2097399 · 版块 42 · 第 2 页 · 来自 select   ← 同上
 ```
 
-没有 `来自 select` 字样，就说明这次是你显式传的参数。执行 `52pojie` 不带任何命令会打印当前选择和常用命令。
+没有 `来自 select` 字样，就说明这次是你显式传的参数。执行 `52pj` 不带任何命令会打印当前选择和常用命令。
 
 ## 命令
 
@@ -127,8 +127,8 @@ pip install .                  # 装成命令，之后直接用 52pojie
 例：
 
 ```bash
-52pojie --json threads -f 32 | jq '.[0].title'
-52pojie --no-color --width 80 thread 2137132
+52pj --json threads -f 32 | jq '.[0].title'
+52pj --no-color --width 80 thread 2137132
 ```
 
 ## 显示优化
@@ -152,7 +152,7 @@ pip install .                  # 装成命令，之后直接用 52pojie
 
 ## 登录与浏览器检测
 
-`52pojie auth` 会先找本机浏览器，顺序是：
+`52pj auth` 会先找本机浏览器，顺序是：
 
 1. **注册表 App Paths**（`HKCU/HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{chrome,msedge,firefox,brave}.exe`）——装在 D 盘等自定义位置也能找到；
 2. **常见安装目录**：`%ProgramFiles%`、`%ProgramFiles(x86)%`、`%LOCALAPPDATA%`、`%LOCALAPPDATA%\Programs` 下的标准相对路径；
@@ -163,7 +163,7 @@ pip install .                  # 装成命令，之后直接用 52pojie
 **没有浏览器时自动改为粘贴 Cookie**，不会报错退出：
 
 ```
-52pojie auth --paste          # 直接走粘贴模式（也可以省略，检测不到会自动进这个模式）
+52pj auth --paste          # 直接走粘贴模式（也可以省略，检测不到会自动进这个模式）
 ```
 
 会提示你：用任意浏览器登录 → F12 → 网络 → 任一请求 → 复制 Request Headers 里的整行 Cookie → 粘进终端（无回显）→ 回车。工具解析后写入 SQLite，并立刻校验登录态（识别不到会明确告知，而不是假装成功）。
@@ -171,7 +171,7 @@ pip install .                  # 装成命令，之后直接用 52pojie
 也可以非交互地导入：
 
 ```bash
-52pojie login --cookie "htVC_2132_auth=...; htVC_2132_saltkey=..."
+52pj login --cookie "htVC_2132_auth=...; htVC_2132_saltkey=..."
 ```
 
 ## 浏览器传输模式（-b）
@@ -179,9 +179,9 @@ pip install .                  # 装成命令，之后直接用 52pojie
 在 Minis App（Android）里，可以不导 cookie，直接借用 App 内已登录的 WebView 发请求：
 
 ```bash
-52pojie -b threads -f 10
-52pojie -b whoami
-52pojie whoami -b          # 放在子命令后也行
+52pj -b threads -f 10
+52pj -b whoami
+52pj whoami -b          # 放在子命令后也行
 ```
 
 不加 `-b` 就是默认的本地直连（curl_cffi 指纹）。
@@ -201,12 +201,12 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
 登录态由浏览器自己的 profile 携带。
 
 ```bash
-52pojie setup --with-selenium     # 装 selenium
-52pojie auth                      # 打开本机浏览器人工登录（含人机验证）
-52pojie -b threads -f 10          # 复用同一 profile 的登录态
+52pj setup --with-selenium     # 装 selenium
+52pj auth                      # 打开本机浏览器人工登录（含人机验证）
+52pj -b threads -f 10          # 复用同一 profile 的登录态
 ```
 
-- `auth` 与 `-b` 共用 `~/.52pojie/browser-profile`，登录一次长期有效；
+- `auth` 与 `-b` 共用 `~/.52pj/browser-profile`，登录一次长期有效；
 - 浏览器选择顺序：系统默认浏览器 → Chrome → Edge → Brave → Firefox；
 - 已装 chromedriver 时直接用本机的，不去网上抓版本；
 - 跨域请求（搜索引擎）仍回退到 curl 指纹会话。
@@ -219,7 +219,7 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
 
 ## 数据位置
 
-- 全部状态在 SQLite：`%USERPROFILE%\.52pojie\pojie.db`（可用 `--home` 改）
+- 全部状态在 SQLite：`%USERPROFILE%\.52pj\52pj.db`（可用 `--home` 改）
 - 表：`meta`（UA/指纹）、`cookies`、`selection`（当前板块/帖子）、`lists`（序号→ID）、`history`、`cache`
 - 板块列表缓存 **一天**，`forums --refresh` 强刷；cookie 长期有效，`logout` 只删 cookie
 
