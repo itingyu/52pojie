@@ -487,7 +487,7 @@ def fetch_forums(cl, force=False):
 # --------------------------------------------------------------------------- #
 # 选择状态（类似工作目录：select 过之后，后续命令默认作用于它）
 # --------------------------------------------------------------------------- #
-BIN = "pojie.bat" if os.name == "nt" else "pojie"
+BIN = "52pj.bat" if os.name == "nt" else "52pj"
 
 
 def equiv(*parts):
@@ -1025,7 +1025,9 @@ def cmd_thread(args, cl):
     else:
         die("还没有选择帖子。先 select <TID 或网址>，或直接 thread <TID>")
 
-    # 页码：--next/--prev 相对上次，--page 绝对，缺省沿用记忆
+    # 页码：--next/--prev 相对上次，--page 绝对，粘网址取 URL 里的页码，
+    # 都缺省才沿用记忆
+    url_hint = url_page_hint(args.tid) if args.tid else None
     if getattr(args, "next_page", False):
         page = int(sel_page) + 1 if sel_tid == tid else 2
     elif getattr(args, "prev_page", False):
@@ -1034,6 +1036,8 @@ def cmd_thread(args, cl):
         page = -1            # 先抓第 1 页拿总页数，下面再折算
     elif args.page:
         page = int(args.page)
+    elif url_hint:
+        page = url_hint
     elif sel_tid == tid:
         page = int(sel_page)
     else:
@@ -1926,6 +1930,21 @@ def normalize_tid(s):
     return digits or s
 
 
+def url_page_hint(s):
+    """从 thread-123-4-1.html 里抽出页码（4）；不是这种形式则返回 None。
+
+    Discuz 的 thread-<tid>-<page>-<x> 里第二个数字是页码。
+    """
+    m = re.search(r"thread-\d+-(\d+)-", str(s or ""))
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if n >= 1 else None
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog="52pj", description="52pojie.cn（吾爱破解）命令行阅读器",
@@ -2085,10 +2104,11 @@ def main(argv=None):
     if getattr(args, "width", None):
         _ui.set_width(args.width)
     _ui.set_json(getattr(args, "json", False))
-    # 允许直接粘帖子网址
+    # 允许直接粘帖子网址。归一化留到 cmd_thread 里做，
+    # 否则 URL 里的页码（thread-123-4-1.html）会先被丢掉。
     if args.cmd == "thread" and getattr(args, "tid", None):
         if not str(args.tid).strip().startswith("#"):
-            args.tid = normalize_tid(args.tid)
+            args.tid = str(args.tid).strip()
     check_deps()
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
                 delay_min=args.delay_min, delay_max=args.delay_max,

@@ -1,11 +1,16 @@
 # 52pj — 52pojie.cn 命令行阅读器
 
-纯 Python（3.8+），零外部依赖即可运行核心逻辑；美化输出、支持 JSON。
+纯 Python（3.8+），只读浏览 52pojie.cn；美化输出、支持 JSON。
+
+仓库：`github.com/itingyu/52pojie`（私有）。
+
+必需依赖两个：`curl_cffi`（TLS 指纹，**缺它直接退出**，不降级）和 `beautifulsoup4`（解析）。
 
 ## 安装
 
 ```bash
-python pojie.py setup          # 装依赖：curl_cffi / beautifulsoup4
+python pojie.py setup                 # 装依赖：curl_cffi / beautifulsoup4
+python pojie.py setup --with-selenium # 另装 selenium（桌面端 -b 用）
 ```
 
 或标准 Python 方式：
@@ -63,8 +68,8 @@ pip install .                  # 装成命令，之后直接用 52pj
 每次输出末尾都会打印等价命令，方便复制或记住参数：
 
 ```
-共 48 条 · thread <TID> 看正文
-等价命令  52pj.bat threads -f 10 --no-pin
+共 48 条 · select #<序号> 选中 · thread #<序号> 直接读
+等价命令  52pj threads -f 10 --no-pin        ← Windows 上是 52pj.bat
 （已把「『水漫金山』」记为当前选择）
 ```
 
@@ -211,10 +216,16 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
 - 已装 chromedriver 时直接用本机的，不去网上抓版本；
 - 跨域请求（搜索引擎）仍回退到 curl 指纹会话。
 
+> **验证状态**：该路径的逻辑（探测、profile 复用、回执解析、跨域回退）有单元测试覆盖
+> （`tests/test_browser_local.py`），但**未在真实 Windows/macOS 桌面环境跑过端到端**——
+> 开发者环境是 Android + PRoot 沙箱，Chromium 在其中无法启动。
+> 首次在桌面使用时请先用 `52pj -b whoami` 确认能通。
+
 ## 已知限制
 
 - **站内搜索已被站点废弃**：`search.php` 一律 302 到 Bing，且 Bing 对本站几乎无索引，所以 `search` 改走 360/Bing 外链解析。找具体帖子首选 `threads --grep` / `latest --grep` 本地过滤。
 - **登录是 Cloudflare Turnstile**：无法纯脚本过验证，所以设计成 `auth` 打开浏览器由你手动登录、工具回收 cookie。也支持 `login --cookie "..."` 直接导入。
+- **游客态的能力边界**：非私密帖的第 1 页可读；第 2 页起标题与楼层都会缺失（页面返回的是登录提示页）；私密版块直接被拦。登录后这些都正常。
 - **纯只读**：没有发帖/回帖命令，从源码层面就不存在。
 
 ## 数据位置
