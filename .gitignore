@@ -3,3 +3,6 @@ __pycache__/
 .selenium/
 .browser-profile/
 *.db
+*.egg-info/
+build/
+dist/
