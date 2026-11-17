@@ -1,7 +1,7 @@
 import os, sqlite3, sys, tempfile, time, importlib.util
 from http.cookiejar import Cookie
 
-SRC = "/var/minis/shared/code/pojie"
+SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, SRC)
 spec = importlib.util.spec_from_file_location("store", os.path.join(SRC, "_store.py"))
 store = importlib.util.module_from_spec(spec); spec.loader.exec_module(store)
