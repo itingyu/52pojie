@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pojie52"
+version = "1.0.0"
+description = "52pojie.cn (吾爱破解) 命令行阅读器"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.28",
+    "beautifulsoup4>=4.11",
+    "curl_cffi>=0.6",
+]
+
+[project.scripts]
+pojie = "pojie:main"
+
+[tool.setuptools]
+py-modules = ["pojie", "_ui", "_pager", "_store"]
