@@ -1,0 +1,16 @@
+README.md
+_browser.py
+_browser_local.py
+_pager.py
+_store.py
+_ui.py
+pojie.py
+pyproject.toml
+pojie52.egg-info/PKG-INFO
+pojie52.egg-info/SOURCES.txt
+pojie52.egg-info/dependency_links.txt
+pojie52.egg-info/entry_points.txt
+pojie52.egg-info/requires.txt
+pojie52.egg-info/top_level.txt
+tests/test_browser_local.py
+tests/test_store.py

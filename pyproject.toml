@@ -17,4 +17,4 @@ dependencies = [
 pojie = "pojie:main"
 
 [tool.setuptools]
-py-modules = ["pojie", "_ui", "_pager", "_store"]
+py-modules = ["pojie", "_ui", "_pager", "_store", "_browser", "_browser_local"]
