@@ -121,6 +121,7 @@ pojie thread --pager
 --width 80      指定输出宽度（默认取终端宽度）
 --delay-min / --delay-max    请求间隔区间，默认 0.7~1.3 秒随机
 --delay 1.0     设基准值，等价 0.75~1.5 秒
+--transport browser   借道 Minis App 内已登录的 WebView 发请求（Android）
 ```
 
 例：
@@ -172,6 +173,23 @@ pojie auth --paste          # 直接走粘贴模式（也可以省略，检测�
 ```bash
 pojie login --cookie "htVC_2132_auth=...; htVC_2132_saltkey=..."
 ```
+
+## 浏览器传输模式（--transport browser）
+
+在 Minis App（Android）里，可以不导 cookie，直接借用 App 内已登录的 WebView 发请求：
+
+```bash
+pojie --transport browser threads -f 10
+pojie --transport browser whoami
+```
+
+原理与边界：
+
+- 请求交给 App 的浏览器执行（同源 `fetch`），**登录态直接生效**——`htVC_2132_auth` 是 HttpOnly，本地进程读不到，借道浏览器是唯一不需要复制 cookie 的路子；
+- 需要 App 处于前台：后台标签会被 WebView 冻结（`fetch` 与定时器一起挂起），传输层会自己开一个前台标签；
+- 正文按原始字节取回再本地解码，站点是 GBK 也不会乱码；
+- 跨域请求（360/Bing 搜索）同源策略挡不住，自动回退到 curl 指纹会话，此时按游客态处理；
+- App 未登录时行为与游客一致（只能看第 1 页、看不到私密版块）。
 
 ## 已知限制
 

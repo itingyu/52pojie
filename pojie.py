@@ -49,6 +49,7 @@ ERR = sys.stderr
 # --------------------------------------------------------------------------- #
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _store
+import _browser
 
 try:
     import _ui
@@ -138,7 +139,7 @@ class Client:
     """带 cookie 持久化与限速的 52pojie 会话。"""
 
     def __init__(self, home=DEFAULT_HOME, delay=None, cookie_file=None,
-                 delay_min=None, delay_max=None):
+                 delay_min=None, delay_max=None, transport="curl"):
         self.home = home
         self.db = _store.connect(home, cookie_file)
         self.cookie_file = _store.db_path(home, cookie_file)
@@ -154,13 +155,20 @@ class Client:
         self.last = time.time()
         self.fp = {}
         self.last_url = None   # 上一页地址，用作下一次的 Referer
-        # 所有请求共用同一个带 Chrome 指纹的会话
-        self.s = _http.Session(impersonate=IMPERSONATE)
+        # 传输层：curl=本地直连（curl_cffi 指纹）；browser=借道 App 内已登录的
+        # WebView 发请求，登录态由 App 携带，客户端不存 cookie
+        self.transport = transport
+        if transport == "browser":
+            self.s = _browser.BrowserSession(BASE)
+        else:
+            # 所有请求共用同一个带 Chrome 指纹的会话
+            self.s = _http.Session(impersonate=IMPERSONATE)
         self.s.headers.update({
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
-        self.load_cookies()
+        if transport != "browser":
+            self.load_cookies()
 
     # ---------- cookie（存 SQLite） ----------
     def load_cookies(self):
@@ -201,6 +209,8 @@ class Client:
                 pass
 
     def save_cookies(self, ua=None, fingerprint=None):
+        if getattr(self, "transport", "curl") == "browser":
+            return          # 浏览器自带会话，客户端不落库
         for c in _iter_cookies_full(self.s.cookies):
             if not c["name"]:      # 站点会下发空名 cookie，不存
                 continue
@@ -1989,6 +1999,9 @@ def build_parser():
         prog="pojie", description="52pojie.cn（吾爱破解）命令行阅读器",
         epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pojie）")
+    p.add_argument("--transport", choices=["curl", "browser"], default="curl",
+                   help="curl=本地直连（curl_cffi 指纹）；"
+                        "browser=借道 App 内已登录的 WebView 发请求")
     p.add_argument("--delay", type=float, default=None,
                    help="请求间隔基准秒（默认在 %.1f-%.1f 秒间随机取值）"
                         % (DELAY_MIN, DELAY_MAX))
@@ -2136,7 +2149,8 @@ def main(argv=None):
             args.tid = normalize_tid(args.tid)
     check_deps()
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
-                delay_min=args.delay_min, delay_max=args.delay_max)
+                delay_min=args.delay_min, delay_max=args.delay_max,
+                transport=getattr(args, "transport", "curl"))
     if args.cmd == "setup":
         return cmd_setup(args, None)
     fn = {
