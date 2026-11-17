@@ -73,10 +73,18 @@ def c(text, *styles):
 # --------------------------------------------------------------------------- #
 # 宽度计算（中文按 2 列）
 # --------------------------------------------------------------------------- #
+_ANSI_RE = re.compile(r"\033\[[0-9;]*m")
+
+
+def strip_ansi(s):
+    """去掉 ANSI 转义序列，只留可见字符。"""
+    return _ANSI_RE.sub("", str(s))
+
+
 def dwidth(s):
-    """显示宽度：东亚全角字符算 2 列。"""
+    """显示宽度：东亚全角字符算 2 列，忽略 ANSI 转义序列。"""
     w = 0
-    for ch in s:
+    for ch in strip_ansi(s):
         if unicodedata.combining(ch):
             continue
         w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
@@ -96,19 +104,28 @@ def pad(s, width, align="<"):
 
 
 def truncate(s, width, ellipsis="…"):
-    """按显示宽度截断。"""
+    """按显示宽度截断；ANSI 转义序列不占宽度，会原样保留。"""
     s = str(s)
     if dwidth(s) <= width:
         return s
-    out = ""
+    out = []
     used = 0
-    for ch in s:
+    i = 0
+    n = len(s)
+    while i < n:
+        m = _ANSI_RE.match(s, i)
+        if m:                       # 转义序列零宽，原样带上
+            out.append(m.group())
+            i = m.end()
+            continue
+        ch = s[i]
         cw = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
         if used + cw > width - 1:
             break
-        out += ch
+        out.append(ch)
         used += cw
-    return out + ellipsis
+        i += 1
+    return "".join(out) + ellipsis
 
 
 def term_width(default=100):
@@ -152,13 +169,28 @@ def table(headers, rows, aligns=None, styles=None, gap=2):
     for row in cells:
         for i, (txt, _s) in enumerate(row):
             widths[i] = max(widths[i], dwidth(txt))
+    # 列宽不能撑破终端：超宽时从最宽的列开始收，收到刚好放得下
+    limit = term_width()
+    # 每列的收缩下限：至少留 16 列，标题列才不至于被压成没法看
+    minw = [max(4, min(widths[i], 16)) for i in range(len(widths))]
+    def total():
+        return sum(widths) + gap * (len(widths) - 1)
+    while total() > limit:
+        # 找还能收的列里最宽的那列
+        cand = [i for i in range(len(widths)) if widths[i] > minw[i]]
+        if not cand:
+            break
+        i = max(cand, key=lambda k: widths[k])
+        widths[i] -= 1
     # 表头
     head = " ".join(pad(h, widths[i], aligns[i]) for i, h in enumerate(headers))
     out(c(head, "bold"))
-    out(c("─" * min(dwidth(head), term_width()), "grey"))
+    # 分割线与表头等宽，不再画到终端边缘
+    out(c("─" * dwidth(head), "grey"))
     for row in cells:
         parts = []
         for i, (txt, sty) in enumerate(row):
+            txt = truncate(txt, widths[i])
             parts.append(c(pad(txt, widths[i], aligns[i]), sty) if sty
                          else pad(txt, widths[i], aligns[i]))
         out(" ".join(parts).rstrip())
@@ -244,7 +276,7 @@ def post_title(title, tid=None, fid=None, note=None):
         meta.append(note)
     if meta:
         out(c("   " + "  ·  ".join(meta), "grey"))
-    out(c("─" * min(term_width(), 72), "grey"))
+    out(c("─" * min(term_width(), 60), "grey"))
 
 
 def post_floor(label, author, when):
