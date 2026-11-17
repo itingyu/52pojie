@@ -3,7 +3,7 @@
 """pojie —— 52pojie.cn（吾爱破解）命令行客户端
 
 只读浏览工具：列板块 / 列帖子 / 看帖（含楼层回复）/ 搜索 / 登录看私密内容
-依赖：requests, beautifulsoup4
+依赖：curl_cffi（强制 Chrome TLS 指纹）, beautifulsoup4
 """
 import argparse
 import getpass
@@ -17,15 +17,14 @@ import urllib.parse
 from http.cookiejar import Cookie
 
 try:
-    # curl_cffi 会伪装 Chrome 的 TLS/JA3 指纹，比裸 requests 更难被风控识别
+    # 强制走 curl_cffi 的 Chrome TLS/JA3 指纹：不提供 requests 降级，
+    # 缺库直接退出，避免裸 TLS 请求被风控识别
     from curl_cffi import requests as _http
-    HAVE_CURL_CFFI = True
 except ImportError:  # pragma: no cover
-    try:
-        import requests as _http
-    except ImportError:
-        _http = None
-    HAVE_CURL_CFFI = False
+    sys.stderr.write(
+        "错误：缺少 curl_cffi，请求必须携 Chrome 指纹。\n"
+        "  python -m pip install curl_cffi\n")
+    raise SystemExit(2)
 try:
     from bs4 import BeautifulSoup
 except ImportError:  # pragma: no cover
@@ -36,8 +35,9 @@ BASE = "https://www.52pojie.cn"
 DELAY_MIN = 0.7
 DELAY_MAX = 1.3
 
-UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+# 固定走 curl_cffi 的 Chrome TLS/JA3 指纹；UA 也由它按 profile 自动对齐，
+# 手写 UA 反而会和 TLS 指纹对不上
+IMPERSONATE = os.environ.get("POJIE_IMPERSONATE") or "chrome"
 DEFAULT_HOME = os.path.join(os.path.expanduser("~"), ".52pojie")
 HOME = DEFAULT_HOME
 
@@ -154,10 +154,9 @@ class Client:
         self.last = time.time()
         self.fp = {}
         self.last_url = None   # 上一页地址，用作下一次的 Referer
-        self.s = (_http.Session(impersonate="chrome") if HAVE_CURL_CFFI
-                 else _http.Session())
+        # 所有请求共用同一个带 Chrome 指纹的会话
+        self.s = _http.Session(impersonate=IMPERSONATE)
         self.s.headers.update({
-            "User-Agent": UA,
             "Accept-Language": "zh-CN,zh;q=0.9",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         })
@@ -169,15 +168,12 @@ class Client:
             rows = _store.get_cookies(self.db)
         except Exception:
             return
-        ua = _store.get_meta(self.db, "ua")
         fp = _store.get_meta(self.db, "fingerprint")
         if fp:
             try:
                 self.fp = json.loads(fp)
             except Exception:
                 self.fp = {}
-        if ua and not HAVE_CURL_CFFI:
-            self.s.headers["User-Agent"] = ua
         for c in rows:
             if not c.get("name"):
                 continue
@@ -277,21 +273,6 @@ class Client:
             h["Sec-Fetch-Mode"] = "cors"
             h["Sec-Fetch-Dest"] = "empty"
             h.pop("Sec-Fetch-User", None)
-        if not HAVE_CURL_CFFI:
-            # 没有 TLS 伪装时，UA 与 client hints 自己造，保持一致
-            h["User-Agent"] = fp.get("ua") or (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-            brands = fp.get("brands") or [
-                {"brand": "Google Chrome", "version": "126"},
-                {"brand": "Chromium", "version": "126"},
-                {"brand": "Not.A/Brand", "version": "24"},
-            ]
-            h["sec-ch-ua"] = ", ".join(
-                '"%s";v="%s"' % (b.get("brand", ""), b.get("version", ""))
-                for b in brands if isinstance(b, dict))
-            h["sec-ch-ua-mobile"] = "?1" if fp.get("mobile") else "?0"
-            h["sec-ch-ua-platform"] = '"%s"' % (fp.get("platform") or "Windows")
         if referer:
             h["Referer"] = referer
         if method.upper() == "POST":
@@ -1929,8 +1910,6 @@ def cmd_auth(args, cl):
 def check_deps(need_bs4=True):
     """检查运行依赖，缺了就提示用 setup 安装。"""
     missing = []
-    if _http is None:
-        missing.append("requests")
     if need_bs4 and BeautifulSoup is None:
         missing.append("beautifulsoup4")
     if missing:
@@ -1940,11 +1919,9 @@ def check_deps(need_bs4=True):
 
 
 def cmd_setup(args, cl):
-    """自动安装依赖：python -m pip install requests beautifulsoup4 curl_cffi"""
+    """自动安装依赖：python -m pip install curl_cffi beautifulsoup4"""
     import subprocess
-    pkgs = ["requests", "beautifulsoup4"]
-    if not args.no_curl_cffi:
-        pkgs.append("curl_cffi")
+    pkgs = ["curl_cffi", "beautifulsoup4"]
     mirrors = [("国内镜像", ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]),
                ("官方源", [])]
     for label, extra in mirrors:
@@ -1960,8 +1937,8 @@ def cmd_setup(args, cl):
             print("依赖安装完成（%s）：%s" % (label, " ".join(pkgs)))
             return 0
         info("%s 安装失败（返回码 %d）" % (label, rc))
-    die("依赖安装失败。请手动执行：\n  python -m pip install requests beautifulsoup4 "
-        "curl_cffi")
+    die("依赖安装失败。请手动执行：\n  python -m pip install curl_cffi "
+        "beautifulsoup4")
 
 
 EXAMPLES = """交互式浏览（选定一次，之后命令都作用于它）：
@@ -2028,8 +2005,6 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", metavar="<命令>")
 
     s = sub.add_parser("setup", help="安装/检查依赖包")
-    s.add_argument("--no-curl-cffi", action="store_true",
-                   help="不装 curl_cffi（不伪装 TLS 指纹，抗风控较差）")
 
     s = sub.add_parser("forums", help="列出板块")
     s.add_argument("--grep", default=None, help="按名称过滤板块")

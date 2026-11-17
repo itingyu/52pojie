@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-python pojie.py setup          # 装依赖：requests / beautifulsoup4 / curl_cffi
+python pojie.py setup          # 装依赖：curl_cffi / beautifulsoup4
 ```
 
 或标准 Python 方式：
@@ -142,8 +142,8 @@ pojie --no-color --width 80 thread 2137132
 
 每次请求都按真实浏览器发，且间隔随机，不做并发：
 
-- **TLS/JA3 指纹**：`curl_cffi` 的 `Session(impersonate="chrome")`，握手特征与 Chrome 一致（没装 curl_cffi 时退化为 requests，只在 headers 层伪装）。
-- **请求头全套**：`Accept`、`Accept-Language: zh-CN,zh;q=0.9,en;q=0.8`、`Upgrade-Insecure-Requests`、`Sec-Fetch-Site/Mode/User/Dest`、`Cache-Control: max-age=0`；无 curl_cffi 时补齐 `User-Agent`、`sec-ch-ua`、`sec-ch-ua-mobile`、`sec-ch-ua-platform`（三者与 UA 版本保持一致）。
+- **TLS/JA3 指纹（强制）**：`curl_cffi` 的 `Session(impersonate="chrome")`，握手特征与 Chrome 一致。**不提供 requests 降级**——缺 curl_cffi 直接退出，杜绝裸 TLS 请求被风控识别。
+- **请求头全套**：`Accept`、`Accept-Language: zh-CN,zh;q=0.9,en;q=0.8`、`Upgrade-Insecure-Requests`、`Sec-Fetch-Site/Mode/User/Dest`、`Cache-Control: max-age=0`。`User-Agent` 与 `sec-ch-ua` 交给 curl_cffi 按 fingerprint profile 生成，**不手写**，避免 UA 与 TLS 指纹对不上。
 - **Referer 自动滚动**：下一次请求带上一页地址做 Referer，`Sec-Fetch-Site` 相应为 `same-origin`；首次请求无 Referer 时为 `none` —— 和真人点链接的轨迹一致。
 - **Origin**：仅 POST 时发，值为站点根。
 - **随机间隔**：每次请求前在 0.7~1.3 秒间随机取值（含首次），单线程串行，不并发、不压测。
