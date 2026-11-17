@@ -1999,11 +1999,8 @@ def build_parser():
         prog="pojie", description="52pojie.cn（吾爱破解）命令行阅读器",
         epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pojie）")
-    p.add_argument("--transport", choices=["curl", "browser"], default="curl",
-                   help="curl=本地直连（curl_cffi 指纹）；"
-                        "browser=借道 App 内已登录的 WebView 发请求")
     p.add_argument("-b", "--browser", action="store_true",
-                   help="等价 --transport browser：借道 App 内已登录的 WebView")
+                   help="借道 App 内已登录的 WebView 发请求（默认本地直连）")
     p.add_argument("--delay", type=float, default=None,
                    help="请求间隔基准秒（默认在 %.1f-%.1f 秒间随机取值）"
                         % (DELAY_MIN, DELAY_MAX))
@@ -2162,7 +2159,7 @@ def main(argv=None):
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
                 delay_min=args.delay_min, delay_max=args.delay_max,
                 transport=("browser" if getattr(args, "browser", False)
-                           else getattr(args, "transport", "curl")))
+                           else "curl"))
     if args.cmd == "setup":
         return cmd_setup(args, None)
     fn = {
