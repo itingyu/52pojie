@@ -7,3 +7,8 @@ __pycache__/
 build/
 dist/
 chromedriver/
+_o*.txt
+_t_*.py
+_d*.txt
+_s*.txt
+.pytest_cache/
