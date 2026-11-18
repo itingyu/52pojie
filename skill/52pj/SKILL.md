@@ -12,11 +12,15 @@ description: 用 52pj 命令行读取 52pojie.cn（吾爱破解）论坛内容�
 ```bash
 git clone https://github.com/itingyu/52pojie.git
 cd 52pj
-pip install -e .
-52pj setup          # 装 curl_cffi、beautifulsoup4
+pip install .
+52pj setup                    # 装 curl_cffi、beautifulsoup4
+52pj setup --with-selenium   # 桌面端要用 -b 时再装 playwright
 ```
 
 `curl_cffi` 是硬依赖，缺了直接退出——所有请求都走它的 Chrome TLS 指纹，不提供 requests 降级。
+
+国内网络 pip 连不上默认源时换镜像：
+`pip install . -i https://pypi.tuna.tsinghua.edu.cn/simple`
 
 ## 基本用法
 
@@ -64,8 +68,9 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 
 - Android（Minis App 内）：借 App 里已登录的 WebView，App 的 HttpOnly cookie 自动带上。
   **App 未登录时 `-b` 也是游客态**，跟不加 `-b` 没区别。
-- 桌面端：Playwright 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj setup --with-selenium` 装依赖，`52pj auth` 登录一次即可复用。
-  用系统已安装的浏览器（读注册表 UserChoice 定位真实 exe），不下载浏览器、不需要 chromedriver。
+- 桌面端：**Playwright** 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj setup --with-selenium` 装依赖，`52pj auth` 登录一次即可复用。
+  浏览器取**系统默认浏览器**的真实 exe：读注册表 `UserChoice` 的 ProgId，再顺着 `HKCR\<ProgId>\shell\open\command` 定位——同机装多个 Chrome 时只有走这一层才对。
+  不下载浏览器、不需要 chromedriver、不往代码目录写任何驱动文件。
   这条路径已在真实 Windows 桌面环境端到端验证过（`-b whoami` / `-b forums` / `-b threads` 均正常）。
 
 不加 `-b` 就是默认的本地直连（curl 指纹，只带本地 cookie 库里的 cookie）。
@@ -93,6 +98,14 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 ## 排版
 
 表格列宽受终端宽度约束，超长标题会截断加 `…`；`--width` 可手动指定。窄终端（50 列）下表格会收窄但不会折行。
+
+## 编码
+
+输出编码自动适配，无需手工设置：
+
+- 重定向到文件/管道 → 纯 UTF-8，**不带 BOM**；
+- 交互终端 → 自动把控制台切到 65001（UTF-8），切不动退回系统编码；
+- `52PJ_ENCODING=utf-8|native|gbk` 可强制。
 
 ## 限制
 

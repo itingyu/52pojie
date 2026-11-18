@@ -5,6 +5,7 @@
 仓库：`github.com/itingyu/52pojie`（私有）。
 
 必需依赖两个：`curl_cffi`（TLS 指纹，**缺它直接退出**，不降级）和 `beautifulsoup4`（解析）。
+桌面端要用 `-b`（借道浏览器）时再装一个 `playwright`。
 
 ## 安装
 
@@ -20,6 +21,25 @@ pip install .                  # 装成命令，之后直接用 52pj
 ```
 
 `52pj.bat` 是给 Windows 的薄壳，内部就是 `python pojie.py %*`。
+
+> **国内网络提示**：`pip install .` 会联网拉构建依赖（setuptools），默认源连不上时
+> 换镜像：`pip install . -i https://pypi.tuna.tsinghua.edu.cn/simple`。
+
+## 终端编码
+
+输出编码自动适配，不用手工设置：
+
+- 重定向到文件或管道 → 写**纯 UTF-8，不带 BOM**（`utf-8` 而非 `utf-8-sig`）；
+- 交互终端 → 自动把控制台切到 65001（UTF-8），切不动就退回系统编码（GBK）；
+- 任何情况下都不会因编码问题崩溃（`errors="replace"` 兜底）。
+
+需要强制时用环境变量：
+
+```bash
+52PJ_ENCODING=utf-8  52pj forums   # 强制 UTF-8
+52PJ_ENCODING=native 52pj forums   # 强制跟随系统编码
+52PJ_ENCODING=gbk    52pj forums   # 强制 GBK
+```
 
 ## 选定上下文（推荐用法）
 
@@ -113,8 +133,12 @@ pip install .                  # 装成命令，之后直接用 52pj
 | `thread 2137132 --op --page 2` | 筛选结果里的第 2 页 |
 | `thread 2137132 --author 某人` | 只看指定昵称 |
 | `search 银狐` | 搜索（走 360 优先，Bing 兜底） |
+| `setup` | 装 / 检查依赖包（`--with-selenium` 另装 playwright） |
 | `auth` | 打开本机浏览器，你手动登录，工具自动收回 cookie |
 | `auth --paste` | 没有浏览器时：粘贴整行 Cookie 登录 |
+| `login -u 账号 -p 密码` | 账号密码登录（站点要 Turnstile 时会失败） |
+| `login --cookie "k=v; k2=v2"` | 直接导入整行浏览器 Cookie |
+| `login --browser` | 用本机浏览器登录（可人工过验证码） |
 | `whoami` | 看登录状态 |
 | `logout` | 清除本地登录态 |
 
@@ -157,13 +181,21 @@ pip install .                  # 装成命令，之后直接用 52pj
 
 ## 登录与浏览器检测
 
-`52pj auth` 会先找本机浏览器，顺序是：
+`52pj auth` 用 **Playwright** 驱动本机已安装的浏览器（不下载浏览器、不需要
+chromedriver，也不往代码目录里写任何驱动文件）。
+
+**先认「系统默认浏览器」**：读注册表 `UserChoice` 的 ProgId，再顺着
+`HKCR\<ProgId>\shell\open\command` 找到那个 exe。这台机器上装了多个 Chrome
+时（不同盘、不同版本），只有走这一层才能拿到你真正在用的那个。
+
+然后按下面的顺序补齐候选：
 
 1. **注册表 App Paths**（`HKCU/HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{chrome,msedge,firefox,brave}.exe`）——装在 D 盘等自定义位置也能找到；
 2. **常见安装目录**：`%ProgramFiles%`、`%ProgramFiles(x86)%`、`%LOCALAPPDATA%`、`%LOCALAPPDATA%\Programs` 下的标准相对路径；
 3. **PATH** 里的 `chrome` / `msedge` / `firefox` / `brave`。
 
-找到后按 `chrome → edge → brave → firefox` 优先选用，`--browser edge` 可指定。
+优先级：系统默认浏览器 → `chrome` → `edge` → `brave` → `firefox`，
+`--browser edge` 可指定。
 
 **没有浏览器时自动改为粘贴 Cookie**，不会报错退出：
 
@@ -218,10 +250,14 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
   chromedriver，也不往代码目录里写任何东西；
 - 跨域请求（搜索引擎）仍回退到 curl 指纹会话。
 
+> **为什么不用 Selenium**：Selenium 需要 chromedriver，且驱动大版本必须与浏览器
+> 一致；Selenium Manager 要联网去 `googlechromelabs.github.io` 抓版本，国内基本
+> 连不上，失败后还会把驱动下载到当前工作目录，污染代码仓库。Playwright 直接用
+> `executable_path` 指向已装的浏览器，绕开了这一整条链路。
+
 > **验证状态**：该路径的逻辑（探测、profile 复用、回执解析、跨域回退）有单元测试覆盖
-> （`tests/test_browser_local.py`），但**未在真实 Windows/macOS 桌面环境跑过端到端**——
-> 开发者环境是 Android + PRoot 沙箱，Chromium 在其中无法启动。
-> 首次在桌面使用时请先用 `52pj -b whoami` 确认能通。
+> （`tests/test_browser_local.py`，14 项全过），且**已在真实 Windows 桌面环境跑通端到端**——
+> `-b whoami` / `-b forums` / `-b threads` 均正常，`auth` 人工登录后 cookie 能被 `-b` 复用。
 
 ## 已知限制
 
@@ -238,4 +274,17 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
 
 ## 环境变量
 
-账号密码可放 `POJIE_52_ACCOUNT` / `POJIE_52_PASSWD`，`login` 时会自动读取（进程环境 → Windows 用户级注册表 → 交互输入）。
+| 变量 | 作用 |
+|---|---|
+| `52PJ_ENCODING` | 强制输出编码：`utf-8` / `native` / `gbk`（默认自动适配） |
+
+| 变量 | 作用 |
+|---|---|
+| `52PJ_ENCODING` | 强制输出编码：`utf-8` / `native` / `gbk`（默认自动适配） |
+| `NO_COLOR` | 存在即关闭彩色输出 |
+| `POJIE_COLOR` | 设为 `1` / `true` / `yes` / `on` 开启彩色输出 |
+| `POJIE_IMPERSONATE` | curl_cffi  impersonate profile，默认 `chrome` |
+| `POJIE_52_ACCOUNT` | 账号（`login -u` 省略时读取） |
+| `POJIE_52_PASSWD` | 密码（`login -p` 省略时读取） |
+
+账号密码读取顺序：进程环境 → Windows 用户级注册表 → 交互输入。

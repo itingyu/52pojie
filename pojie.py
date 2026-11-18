@@ -1966,7 +1966,7 @@ def build_parser():
 
     s = sub.add_parser("setup", help="安装/检查依赖包")
     s.add_argument("--with-selenium", action="store_true",
-                   help="一并安装 selenium（本地浏览器传输层需要）")
+                   help="一并安装 playwright（本地浏览器传输层需要）")
 
     s = sub.add_parser("forums", help="列出板块")
     s.add_argument("--grep", default=None, help="按名称过滤板块")
