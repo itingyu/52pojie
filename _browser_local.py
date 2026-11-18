@@ -291,6 +291,13 @@ class LocalBrowserSession:
         self._pw = sync_playwright().start()
         try:
             # 用系统已装的浏览器（executable_path），不下载 playwright 自带浏览器
+            kw = {}
+            if self.headless:
+                # 无头不改变 UA：重建与有头完全一致的 UA 并覆盖，
+                # 同时修正 JS 可见值与 HTTP 请求头。
+                ua = headless_user_agent(path)
+                if ua:
+                    kw["user_agent"] = ua
             ctx = self._pw.chromium.launch_persistent_context(
                 self.profile_dir or _tmp_profile(),
                 executable_path=path,
@@ -298,6 +305,7 @@ class LocalBrowserSession:
                 args=self._launch_args(),
                 ignore_default_args=["--enable-automation"],
                 viewport=None,
+                **kw
             )
         except Exception as exc:
             try:
@@ -391,6 +399,34 @@ class LocalBrowserSession:
         self._ctx = self._pw = self._page = None
 
 
+def _guess_encoding(content, ctype=""):
+    """推断响应编码：content-type → HTML meta → utf-8/gbk 试探。
+
+    站点（Discuz）是 GBK，若直接按 UTF-8 解会把中文全变成替换符，
+    导致后续关键字匹配、标题解析全部失效。
+    """
+    import re as _re
+    low = (ctype or "").lower()
+    m = _re.search(r"charset=([\w-]+)", low)
+    if m:
+        enc = m.group(1).strip()
+        if enc not in ("", "none"):
+            return enc
+    head = content[:4096].decode("ascii", "ignore")
+    m = _re.search(r"""charset=["']?([\w-]+)""", head, _re.I)
+    if m:
+        enc = m.group(1).strip().lower()
+        if enc not in ("", "none"):
+            return enc
+    for enc in ("utf-8", "gbk"):
+        try:
+            content.decode(enc)
+            return enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "utf-8"
+
+
 class _Response:
     """最小 Response 替身：只需 status/headers/content。"""
 
@@ -398,7 +434,11 @@ class _Response:
         self.status_code = status
         self.headers = _Headers(ctype, headers or {})
         self.content = content
-        self.text = content.decode("utf-8", "replace")
+        enc = _guess_encoding(content, ctype)
+        try:
+            self.text = content.decode(enc, "replace")
+        except LookupError:
+            self.text = content.decode("utf-8", "replace")
 
     def json(self):
         return json.loads(self.text)
@@ -413,6 +453,46 @@ class _Headers(dict):
         super().__init__(extra or {})
         if ctype:
             self["content-type"] = ctype
+
+
+def _browser_major(exe_path):
+    """从 Chrome 系浏览器的安装目录推断主版本号。
+
+    安装目录形如 .../Application/138.0.7204.101/chrome.exe —— 取最高版本。
+    """
+    import os
+    import re as _re
+    d = os.path.dirname(os.path.abspath(exe_path or ""))
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return None
+    vers = [n for n in names if _re.match(r"^\d+\.\d+\.\d+\.\d+$", n)]
+    if not vers:
+        return None
+    vers.sort(key=lambda v: tuple(int(x) for x in v.split(".")), reverse=True)
+    return vers[0].split(".")[0]
+
+
+def headless_user_agent(exe_path):
+    """无头模式下要用的 UA —— 与同版本有头浏览器完全一致。
+
+    Chrome 的 --headless 会把 UA 里的 Chrome/x 改成 HeadlessChrome/x，
+    等于自报机器人。这里按浏览器主版本重建正常 UA，再用 user_agent
+    参数覆盖，使 JS 可见 UA 与 HTTP 头同时归位。
+    """
+    import sys as _sys
+    major = _browser_major(exe_path)
+    if not major:
+        return None
+    if _sys.platform.startswith("win"):
+        plat = "Windows NT 10.0; Win64; x64"
+    elif _sys.platform == "darwin":
+        plat = "Macintosh; Intel Mac OS X 10_15_7"
+    else:
+        plat = "X11; Linux x86_64"
+    return ("Mozilla/5.0 (%s) AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/%s.0.0.0 Safari/537.36" % (plat, major))
 
 
 def _tmp_profile():
@@ -446,6 +526,11 @@ def open_login_window(browser_key=None, browser_path=None, profile_dir=None,
     pw = sync_playwright().start()
     ctx = None
     try:
+        kw = {}
+        if headless:
+            ua = headless_user_agent(path)
+            if ua:
+                kw["user_agent"] = ua
         ctx = pw.chromium.launch_persistent_context(
             profile_dir or _tmp_profile(),
             executable_path=path,
@@ -453,6 +538,7 @@ def open_login_window(browser_key=None, browser_path=None, profile_dir=None,
             args=args,
             ignore_default_args=["--enable-automation"],
             viewport=None,
+            **kw
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto("https://www.52pojie.cn/member.php?mod=logging&action=login",

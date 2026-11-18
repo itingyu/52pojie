@@ -75,6 +75,8 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 - Android（Minis App 内）：借 App 里已登录的 WebView，App 的 HttpOnly cookie 自动带上。
   **App 未登录时 `-b` 也是游客态**，跟不加 `-b` 没区别。
 - 桌面端：**Playwright** 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj auth` 登录一次即可复用。
+- 桌面端默认**无头**（不弹窗），加 `--headed` 才显示窗口；`auth` 始终有头（要人工过验证码）。
+- 无头时不改变 UA：会按浏览器主版本重建正常 UA 覆盖，避免暴露 `HeadlessChrome`。
   浏览器取**系统默认浏览器**的真实 exe：读注册表 `UserChoice` 的 ProgId，再顺着 `HKCR\<ProgId>\shell\open\command` 定位——同机装多个 Chrome 时只有走这一层才对。
   不下载浏览器、不需要 chromedriver、不往代码目录写任何驱动文件。
   这条路径已在真实 Windows 桌面环境端到端验证过（`-b whoami` / `-b forums` / `-b threads` 均正常）。

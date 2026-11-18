@@ -152,7 +152,7 @@ def _has_webview():
     return bool(shutil.which("minis-browser-use"))
 
 
-def _browser_session(home, backend="auto"):
+def _browser_session(home, backend="auto", headless=True):
     """挑一个可用的浏览器传输层后端。
 
     backend:
@@ -172,7 +172,7 @@ def _browser_session(home, backend="auto"):
         return _browser.BrowserSession(BASE)
     if backend == "browser":
         return _browser_local.LocalBrowserSession(
-            BASE, profile_dir=browser_profile_dir(home))
+            BASE, profile_dir=browser_profile_dir(home), headless=headless)
     # auto
     if _has_webview():
         try:
@@ -180,7 +180,7 @@ def _browser_session(home, backend="auto"):
         except Exception:
             pass
     return _browser_local.LocalBrowserSession(
-        BASE, profile_dir=browser_profile_dir(home))
+        BASE, profile_dir=browser_profile_dir(home), headless=headless)
 
 
 class Client:
@@ -188,7 +188,7 @@ class Client:
 
     def __init__(self, home=DEFAULT_HOME, delay=None, cookie_file=None,
                  delay_min=None, delay_max=None, transport="curl",
-                 backend="auto"):
+                 backend="auto", headless=True):
         self.home = home
         self.db = _store.connect(home, cookie_file)
         self.cookie_file = _store.db_path(home, cookie_file)
@@ -208,7 +208,7 @@ class Client:
         # WebView 发请求，登录态由 App 携带，客户端不存 cookie
         self.transport = transport
         if transport == "browser":
-            self.s = _browser_session(home, backend=backend)
+            self.s = _browser_session(home, backend=backend, headless=headless)
         else:
             # 所有请求共用同一个带 Chrome 指纹的会话
             self.s = _http.Session(impersonate=IMPERSONATE)
@@ -2040,6 +2040,8 @@ def build_parser():
         prog="52pj", description="52pojie.cn（吾爱破解）命令行阅读器",
         epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pj）")
+    p.add_argument("--headed", action="store_true",
+                   help="浏览器后端显示窗口（默认无头；登录始终有头）")
     p.add_argument("-b", "--browser", action="store_true",
                    help="借道浏览器发请求（自动选后端：App WebView 或本机浏览器）")
     p.add_argument("-W", "--webview", action="store_true",
@@ -2087,11 +2089,15 @@ def build_parser():
 
     s = sub.add_parser("status", help="查看当前选择与登录状态")
     s_sign = sub.add_parser("sign", help="每日签到，领取论坛币")
+    # default=SUPPRESS：子命令没显式给这些开关时，不要覆盖全局已解析的值
     s_sign.add_argument("-b", "--browser", action="store_true",
+                        default=argparse.SUPPRESS,
                         help="借道浏览器发请求")
     s_sign.add_argument("-W", "--webview", action="store_true",
+                        default=argparse.SUPPRESS,
                         help="强制用 Minis App 内已登录的 WebView 发请求")
     s_sign.add_argument("-L", "--local", action="store_true",
+                        default=argparse.SUPPRESS,
                         help="强制用本机默认浏览器发请求（Playwright 驱动）")
 
 
@@ -2252,9 +2258,13 @@ def main(argv=None):
         backend = "auto"
     # playwright 只有「本机浏览器」后端才用得到
     check_deps(need_playwright=(backend == "browser"))
+    # 读操作默认无头；--headed 或登录类命令才开窗口
+    headless = not getattr(args, "headed", False)
+    if args.cmd in ("auth", "login"):
+        headless = False
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
-                delay_min=args.delay_min, delay_max=args.delay_max,
-                transport=transport, backend=backend)
+                 delay_min=args.delay_min, delay_max=args.delay_max,
+                 transport=transport, backend=backend, headless=headless)
     if args.cmd == "setup":
         return cmd_setup(args, None)
     fn = {
