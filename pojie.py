@@ -147,13 +147,34 @@ def browser_profile_dir(home):
     return os.path.join(home or DEFAULT_HOME, "browser-profile")
 
 
-def _browser_session(home):
+def _has_webview():
+    """当前环境有没有 Minis App 的 WebView 通道。"""
+    return bool(shutil.which("minis-browser-use"))
+
+
+def _browser_session(home, backend="auto"):
     """挑一个可用的浏览器传输层后端。
 
-    优先用 Minis App 内已登录的 WebView（Android），没有就退回本机浏览器
-    （桌面端），两者提供同一个"页内 fetch"能力。
+    backend:
+      auto    —— 有 App 的 WebView 通道就用它，否则用本机浏览器
+      webview —— 强制用 Minis App 内已登录的 WebView
+      browser —— 强制用本机浏览器（Playwright 驱动系统已装的浏览器）
+
+    两种后端提供同一个「页内 fetch」能力，区别在于登录态从哪来：
+      webview —— App 的 cookie（HttpOnly，只有 App 进程内读得到）
+      browser —— 本机浏览器的 profile 目录
     """
-    if shutil.which("minis-browser-use"):
+    if backend == "webview":
+        if not _has_webview():
+            die("本环境没有 Minis App 的 WebView 通道"
+                "（找不到 minis-browser-use）。"
+                "在 App / 沙箱里运行，或改用 --local（走本机浏览器）。")
+        return _browser.BrowserSession(BASE)
+    if backend == "browser":
+        return _browser_local.LocalBrowserSession(
+            BASE, profile_dir=browser_profile_dir(home))
+    # auto
+    if _has_webview():
         try:
             return _browser.BrowserSession(BASE)
         except Exception:
@@ -166,7 +187,8 @@ class Client:
     """带 cookie 持久化与限速的 52pj 会话。"""
 
     def __init__(self, home=DEFAULT_HOME, delay=None, cookie_file=None,
-                 delay_min=None, delay_max=None, transport="curl"):
+                 delay_min=None, delay_max=None, transport="curl",
+                 backend="auto"):
         self.home = home
         self.db = _store.connect(home, cookie_file)
         self.cookie_file = _store.db_path(home, cookie_file)
@@ -186,7 +208,7 @@ class Client:
         # WebView 发请求，登录态由 App 携带，客户端不存 cookie
         self.transport = transport
         if transport == "browser":
-            self.s = _browser_session(home)
+            self.s = _browser_session(home, backend=backend)
         else:
             # 所有请求共用同一个带 Chrome 指纹的会话
             self.s = _http.Session(impersonate=IMPERSONATE)
@@ -777,6 +799,70 @@ def show_selection(args, st):
         _ui.out(_ui.c("帖子 ", "grey") + _ui.c("%s" % (ttitle or "(无标题)"), "bold")
                 + _ui.c(" (TID %s · 第 %s 页)" % (tid, tpage), "grey"))
     return 0
+
+
+SIGN_TASK_PAGE = "/home.php?mod=spacecp&ac=credit&showcredit&type=task"
+
+
+def _sign_visible_text(resp):
+    """把签到结果页里的提示文字抠出来。"""
+    t = resp.text
+    # Discuz 提示框
+    sp = soup_of(resp)
+    for sel in ("#messagetext", ".alert_error", ".alert_info",
+                ".alert_warning", ".alert_success"):
+        n = sp.select_one(sel)
+        if n:
+            s = text_of(n)
+            if s:
+                return s
+    m = re.search(r"showmessage\((.*?)\);", t, re.S)
+    if m:
+        return m.group(1).strip("\"'")
+    return ""
+
+
+def cmd_sign(args, cl):
+    """每日签到，领取论坛币。
+
+    这是本工具唯一的写操作。签到入口是积分页上的「领取今日签到奖励」，
+    由服务端按是否已签到决定是否渲染：
+      未签到 → 页面有 mod=task&do=apply 链接，访问即完成签到
+      已签到 → 页面没有该链接，直接告知今天已签过
+    """
+    if not cl.logged_in():
+        die("未登录，无法签到。请先 52pj auth，或用 52pj login --cookie \"...\" 导入。")
+    info("正在检查签到状态…")
+    r = cl.get(SIGN_TASK_PAGE)
+    t = r.text
+    # 未签到：页面渲染出签到链接
+    m = re.search(r'href="([^"]*mod=task&do=(?:apply|draw)[^"]*)"', t)
+    if m:
+        href = m.group(1).replace("&amp;", "&")
+        if href.startswith("/"):
+            href = href[1:]
+        if not href.startswith("http"):
+            href = BASE + "/" + href
+        info("找到签到入口，正在签到…")
+        r2 = cl.get(href, referer=BASE + SIGN_TASK_PAGE)
+        msg = _sign_visible_text(r2)
+        # 回到积分页确认结果
+        after = cl.get(SIGN_TASK_PAGE)
+        left = bool(re.search(r'href="[^"]*mod=task&do=(?:apply|draw)',
+                              after.text))
+        if left:
+            die("签到未生效：页面上仍有签到入口。"
+                "站点可能要求额外验证（如安全提问），请在浏览器里手动签到。")
+        if msg:
+            print("签到成功：" + msg)
+        else:
+            print("签到成功")
+        return 0
+    # 已是签到态：没有链接
+    if "签到" in t or "今日签到" in t:
+        print("今天已经签过到了，无需重复。")
+        return 0
+    die("未找到签到入口。站点可能改版，或该账号无签到任务。")
 
 
 def cmd_status(args, cl):
@@ -1847,11 +1933,20 @@ def cmd_auth(args, cl):
     return 0
 
 
-def check_deps(need_bs4=True):
-    """检查运行依赖，缺了就提示用 setup 安装。"""
+def check_deps(need_bs4=True, need_playwright=False):
+    """检查运行依赖，缺了就提示用 setup 安装。
+
+    need_playwright 只在真正要走「本机浏览器」后端时才检查 ——
+    App WebView 后端和纯 curl 直连都用不到它。
+    """
     missing = []
     if need_bs4 and BeautifulSoup is None:
         missing.append("beautifulsoup4")
+    if need_playwright:
+        try:
+            import playwright  # noqa: F401
+        except ImportError:
+            missing.append("playwright")
     if missing:
         die("缺少依赖：%s\n请先运行：pojie.bat setup   "
             "（或手动执行：python -m pip install %s）"
@@ -1861,9 +1956,8 @@ def check_deps(need_bs4=True):
 def cmd_setup(args, cl):
     """自动安装依赖：python -m pip install curl_cffi beautifulsoup4"""
     import subprocess
-    pkgs = ["curl_cffi", "beautifulsoup4"]
-    if getattr(args, "with_selenium", False):
-        pkgs.append("playwright")
+    # playwright 是硬依赖：本机浏览器传输层（--local）要用它驱动系统浏览器
+    pkgs = ["curl_cffi", "beautifulsoup4", "playwright"]
     mirrors = [("国内镜像", ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]),
                ("官方源", [])]
     for label, extra in mirrors:
@@ -1947,7 +2041,11 @@ def build_parser():
         epilog=EXAMPLES, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--home", default=DEFAULT_HOME, help="配置目录（默认 %%USERPROFILE%%/.52pj）")
     p.add_argument("-b", "--browser", action="store_true",
-                   help="借道 App 内已登录的 WebView 发请求（默认本地直连）")
+                   help="借道浏览器发请求（自动选后端：App WebView 或本机浏览器）")
+    p.add_argument("-W", "--webview", action="store_true",
+                   help="强制用 Minis App 内已登录的 WebView 发请求")
+    p.add_argument("-L", "--local", action="store_true",
+                   help="强制用本机默认浏览器发请求（Playwright 驱动）")
     p.add_argument("--delay", type=float, default=None,
                    help="请求间隔基准秒（默认在 %.1f-%.1f 秒间随机取值）"
                         % (DELAY_MIN, DELAY_MAX))
@@ -1965,8 +2063,9 @@ def build_parser():
     # 下面统一给每个子命令也挂上 -b/--browser（放在子命令后也能用）
 
     s = sub.add_parser("setup", help="安装/检查依赖包")
-    s.add_argument("--with-selenium", action="store_true",
-                   help="一并安装 playwright（本地浏览器传输层需要）")
+    s.add_argument("--with-browser", "--with-selenium", dest="with_browser",
+                   action="store_true",
+                   help="保留兼容：playwright 现在是必装依赖，setup 会自动装上")
 
     s = sub.add_parser("forums", help="列出板块")
     s.add_argument("--grep", default=None, help="按名称过滤板块")
@@ -1987,6 +2086,14 @@ def build_parser():
                    help="配合 --clear：只清帖子")
 
     s = sub.add_parser("status", help="查看当前选择与登录状态")
+    s_sign = sub.add_parser("sign", help="每日签到，领取论坛币")
+    s_sign.add_argument("-b", "--browser", action="store_true",
+                        help="借道浏览器发请求")
+    s_sign.add_argument("-W", "--webview", action="store_true",
+                        help="强制用 Minis App 内已登录的 WebView 发请求")
+    s_sign.add_argument("-L", "--local", action="store_true",
+                        help="强制用本机默认浏览器发请求（Playwright 驱动）")
+
 
     s = sub.add_parser("threads", help="列出某板块的帖子")
     s.add_argument("--fid", "-f", default=None,
@@ -2058,7 +2165,13 @@ def build_parser():
             continue
         _sp.add_argument("-b", "--browser", action="store_true",
                          default=argparse.SUPPRESS,
-                         help="借道 App 内已登录的 WebView 发请求")
+                         help="借道浏览器发请求")
+        _sp.add_argument("-W", "--webview", action="store_true",
+                         default=argparse.SUPPRESS,
+                         help="强制用 Minis App 内已登录的 WebView 发请求")
+        _sp.add_argument("-L", "--local", action="store_true",
+                         default=argparse.SUPPRESS,
+                         help="强制用本机默认浏览器发请求（Playwright 驱动）")
 
     return p
 
@@ -2127,11 +2240,21 @@ def main(argv=None):
     if args.cmd == "thread" and getattr(args, "tid", None):
         if not str(args.tid).strip().startswith("#"):
             args.tid = str(args.tid).strip()
-    check_deps()
+    # 传输后端：-b 自动选；--webview 强制 App WebView；--local 强制本机浏览器
+    if getattr(args, "webview", False) and getattr(args, "local", False):
+        die("--webview 与 --local 不能同时用")
+    if getattr(args, "webview", False):
+        transport, backend = "browser", "webview"
+    elif getattr(args, "local", False):
+        transport, backend = "browser", "browser"
+    else:
+        transport = ("browser" if getattr(args, "browser", False) else "curl")
+        backend = "auto"
+    # playwright 只有「本机浏览器」后端才用得到
+    check_deps(need_playwright=(backend == "browser"))
     cl = Client(home=args.home, delay=args.delay, cookie_file=args.cookie_file,
                 delay_min=args.delay_min, delay_max=args.delay_max,
-                transport=("browser" if getattr(args, "browser", False)
-                           else "curl"))
+                transport=transport, backend=backend)
     if args.cmd == "setup":
         return cmd_setup(args, None)
     fn = {
@@ -2139,6 +2262,7 @@ def main(argv=None):
         "latest": cmd_latest, "auth": cmd_auth,
         "search": cmd_search, "login": cmd_login, "whoami": cmd_whoami,
         "logout": cmd_logout, "select": cmd_select, "status": cmd_status,
+        "sign": cmd_sign,
     }[args.cmd]
     try:
         return fn(args, cl)

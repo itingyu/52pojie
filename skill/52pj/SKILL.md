@@ -1,11 +1,11 @@
 ---
 name: 52pj
-description: 用 52pj 命令行读取 52pojie.cn（吾爱破解）论坛内容——列版块、列帖子、读帖子正文与楼层、站内搜索、登录后看私密版块。当用户要查吾爱破解/52pojie 的帖子、版块列表、某主题的回复内容，或需要以命令行走论坛时使用。
+description: 用 52pj 命令行读取 52pojie.cn（吾爱破解）论坛内容——列版块、列帖子、读帖子正文与楼层、站内搜索、登录后看私密版块、每日签到。当用户要查吾爱破解/52pojie 的帖子、版块列表、某主题的回复内容、需要以命令行走论坛，或要签到领吾爱币时使用。
 ---
 
 # 52pj —— 52pojie.cn 命令行阅读器
 
-只读浏览 52pojie.cn 的命令行工具。仓库：`github.com/itingyu/52pojie`。
+浏览 52pojie.cn 的命令行工具（以读为主，仅 `sign` 一个签到写操作）。仓库：`github.com/itingyu/52pojie`。
 
 ## 安装
 
@@ -13,11 +13,12 @@ description: 用 52pj 命令行读取 52pojie.cn（吾爱破解）论坛内容�
 git clone https://github.com/itingyu/52pojie.git
 cd 52pj
 pip install .
-52pj setup                    # 装 curl_cffi、beautifulsoup4
-52pj setup --with-selenium   # 桌面端要用 -b 时再装 playwright
+52pj setup          # 一次装齐：curl_cffi / beautifulsoup4 / playwright
 ```
 
-`curl_cffi` 是硬依赖，缺了直接退出——所有请求都走它的 Chrome TLS 指纹，不提供 requests 降级。
+三个都是硬依赖，缺了直接退出：
+`curl_cffi`（所有请求走它的 Chrome TLS 指纹，不提供 requests 降级）、
+`beautifulsoup4`（解析）、`playwright`（驱动本机浏览器，`--local` 后端要用）。
 
 国内网络 pip 连不上默认源时换镜像：
 `pip install . -i https://pypi.tuna.tsinghua.edu.cn/simple`
@@ -64,11 +65,16 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 
 ```bash
 52pj -b threads -f 10            # 子命令前后都行
+52pj --webview threads -f 10     # 强制用 App 内已登录的 WebView（-W）
+52pj --local threads -f 10       # 强制用本机默认浏览器（-L，Playwright 驱动）
 ```
+
+`-b` 不带后端参数时自动选：有 `minis-browser-use` 通道就用 App 的 WebView，
+否则用本机浏览器。`--webview` / `--local` 可显式指定，条件不具备时直接报错。
 
 - Android（Minis App 内）：借 App 里已登录的 WebView，App 的 HttpOnly cookie 自动带上。
   **App 未登录时 `-b` 也是游客态**，跟不加 `-b` 没区别。
-- 桌面端：**Playwright** 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj setup --with-selenium` 装依赖，`52pj auth` 登录一次即可复用。
+- 桌面端：**Playwright** 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj auth` 登录一次即可复用。
   浏览器取**系统默认浏览器**的真实 exe：读注册表 `UserChoice` 的 ProgId，再顺着 `HKCR\<ProgId>\shell\open\command` 定位——同机装多个 Chrome 时只有走这一层才对。
   不下载浏览器、不需要 chromedriver、不往代码目录写任何驱动文件。
   这条路径已在真实 Windows 桌面环境端到端验证过（`-b whoami` / `-b forums` / `-b threads` 均正常）。
@@ -107,9 +113,21 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 - 交互终端 → 自动把控制台切到 65001（UTF-8），切不动退回系统编码；
 - `52PJ_ENCODING=utf-8|native|gbk` 可强制。
 
+## 签到
+
+```bash
+52pj sign            # 每日签到，领取论坛币
+52pj sign --webview  # 借 App 的 WebView 签到（App 已登录时）
+```
+
+**这是本工具唯一的写操作**，其余命令全部只读。
+签到入口是积分页上的「领取今日签到奖励」，由服务端按是否已签到决定是否渲染：
+未签到 → 页面有 `mod=task&do=apply` 链接，访问即完成；已签到 → 直接告知今天签过。
+未登录会直接报错。
+
 ## 限制
 
-- 只读：不能发帖、回帖、点赞
+- 除 `sign` 外全部只读：不能发帖、回帖、点赞
 - 游客态：私密版块被拦；非私密帖的第 1 页可读，第 2 页起标题与楼层缺失
 - 搜索依赖第三方引擎，站内索引不全，搜不到就翻版块列表
 - 站点是 GBK 编码，内容已正确解码，直接读输出即可

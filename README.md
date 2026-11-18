@@ -4,14 +4,18 @@
 
 仓库：`github.com/itingyu/52pojie`（私有）。
 
-必需依赖两个：`curl_cffi`（TLS 指纹，**缺它直接退出**，不降级）和 `beautifulsoup4`（解析）。
-桌面端要用 `-b`（借道浏览器）时再装一个 `playwright`。
+设计文档：[架构设计.md](docs/架构设计.md) · [功能设计.md](docs/功能设计.md)
+
+必需依赖三个，缺任何一个都会直接退出（不降级、不静默跳过）：
+
+- `curl_cffi` —— TLS 指纹，所有请求都走它的 Chrome 指纹
+- `beautifulsoup4` —— 页面解析
+- `playwright` —— 驱动本机浏览器（`--local` 后端用它）
 
 ## 安装
 
 ```bash
-python pojie.py setup                 # 装依赖：curl_cffi / beautifulsoup4
-python pojie.py setup --with-selenium # 另装 playwright（桌面端 -b 用）
+python pojie.py setup    # 一次装齐：curl_cffi / beautifulsoup4 / playwright
 ```
 
 或标准 Python 方式：
@@ -133,7 +137,7 @@ pip install .                  # 装成命令，之后直接用 52pj
 | `thread 2137132 --op --page 2` | 筛选结果里的第 2 页 |
 | `thread 2137132 --author 某人` | 只看指定昵称 |
 | `search 银狐` | 搜索（走 360 优先，Bing 兜底） |
-| `setup` | 装 / 检查依赖包（`--with-selenium` 另装 playwright） |
+| `setup` | 装 / 检查依赖包（curl_cffi / beautifulsoup4 / playwright） |
 | `auth` | 打开本机浏览器，你手动登录，工具自动收回 cookie |
 | `auth --paste` | 没有浏览器时：粘贴整行 Cookie 登录 |
 | `login -u 账号 -p 密码` | 账号密码登录（站点要 Turnstile 时会失败） |
@@ -141,10 +145,15 @@ pip install .                  # 装成命令，之后直接用 52pj
 | `login --browser` | 用本机浏览器登录（可人工过验证码） |
 | `whoami` | 看登录状态 |
 | `logout` | 清除本地登录态 |
+| `sign` | **每日签到**，领取论坛币（唯一的写操作） |
+| `sign` | **每日签到**，领取论坛币（唯一的写操作） |
 
 ## 全局开关
 
 ```bash
+-b / --browser  借道浏览器发请求（自动选后端）
+-W / --webview  强制用 Minis App 内已登录的 WebView
+-L / --local    强制用本机默认浏览器（Playwright 驱动）
 --json          输出 JSON，便于脚本处理
 --color         开启彩色输出（默认关闭，等价 POJIE_COLOR=1）
 --width 80      指定输出宽度（默认取终端宽度）
@@ -223,6 +232,17 @@ chromedriver，也不往代码目录里写任何驱动文件）。
 
 不加 `-b` 就是默认的本地直连（curl_cffi 指纹）。
 
+**两种浏览器后端，可显式指定：**
+
+| 写法 | 后端 | 登录态来自 | 可用环境 |
+|---|---|---|---|
+| `52pj -b forums` | 自动选 | — | 通用 |
+| `52pj --webview forums`（`-W`） | Minis App 内的 WebView | App 的 cookie（HttpOnly） | App / 沙箱内 |
+| `52pj --local forums`（`-L`） | 本机默认浏览器（Playwright 驱动） | 本机浏览器 profile | 桌面宿主 |
+
+自动选：有 `minis-browser-use` 通道就用 App 的 WebView，否则用本机浏览器。
+强制指定后若当前环境不具备该条件，会直接报错说明原因，不会静默换用别的后端。
+
 原理与边界：
 
 - 请求交给 App 的浏览器执行（同源 `fetch`），**登录态直接生效**——`htVC_2132_auth` 是 HttpOnly，本地进程读不到，借道浏览器是唯一不需要复制 cookie 的路子；
@@ -238,7 +258,6 @@ Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执�
 登录态由浏览器自己的 profile 携带。
 
 ```bash
-52pj setup --with-selenium     # 装 playwright
 52pj auth                      # 打开本机浏览器人工登录（含人机验证）
 52pj -b threads -f 10          # 复用同一 profile 的登录态
 ```

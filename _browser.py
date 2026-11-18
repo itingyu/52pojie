@@ -64,7 +64,9 @@ class _NullCookies:
         pass
 
 
-_TAB_RE = re.compile(r"^\s*(\*?)\s*Tab\s+(\d+):")
+# 标签页行形如 "  Tab 0: 标题 — url"，当前活动标签在行尾带 " *"
+_TAB_RE = re.compile(r"^\s*Tab\s+(\d+):")
+_ACTIVE_RE = re.compile(r"\s\*\s*$")
 _SUFFIX_RE = re.compile(r"\n\s*tab_id:\s*\d+\s*$")
 
 
@@ -104,10 +106,14 @@ class BrowserSession:
         return self._run({"action": "list_tabs"}, timeout=30)
 
     def _active_tab(self):
+        """当前处于前台（活动）的标签页 id。
+
+        活动标记 "*" 在行尾，如 "  Tab 0: 标题 — url *"，不在行首。
+        """
         for line in self._tabs().splitlines():
             m = _TAB_RE.match(line)
-            if m and m.group(1) == "*":
-                return int(m.group(2))
+            if m and _ACTIVE_RE.search(line):
+                return int(m.group(1))
         return None
 
     @property
