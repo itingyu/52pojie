@@ -10,7 +10,7 @@
 
 ```bash
 python pojie.py setup                 # 装依赖：curl_cffi / beautifulsoup4
-python pojie.py setup --with-selenium # 另装 selenium（桌面端 -b 用）
+python pojie.py setup --with-selenium # 另装 playwright（桌面端 -b 用）
 ```
 
 或标准 Python 方式：
@@ -201,19 +201,21 @@ pip install .                  # 装成命令，之后直接用 52pj
 
 ### 桌面端（Windows / macOS / Linux）
 
-没有 Minis App 的 WebView 可借时，`-b` 自动改用**本机浏览器**：Selenium 驱动
+没有 Minis App 的 WebView 可借时，`-b` 自动改用**本机浏览器**：Playwright 驱动
 Chrome / Edge / Brave / Firefox（系统默认浏览器优先），在页内执行同一段 fetch 脚本，
 登录态由浏览器自己的 profile 携带。
 
 ```bash
-52pj setup --with-selenium     # 装 selenium
+52pj setup --with-selenium     # 装 playwright
 52pj auth                      # 打开本机浏览器人工登录（含人机验证）
 52pj -b threads -f 10          # 复用同一 profile 的登录态
 ```
 
 - `auth` 与 `-b` 共用 `~/.52pj/browser-profile`，登录一次长期有效；
 - 浏览器选择顺序：系统默认浏览器 → Chrome → Edge → Brave → Firefox；
-- 已装 chromedriver 时直接用本机的，不去网上抓版本；
+- **用系统已安装的浏览器**（读注册表 UserChoice 的 ProgId，再顺着
+  `HKCR\<ProgId>\shell\open\command` 找到真实 exe），不下载浏览器、不需要
+  chromedriver，也不往代码目录里写任何东西；
 - 跨域请求（搜索引擎）仍回退到 curl 指纹会话。
 
 > **验证状态**：该路径的逻辑（探测、profile 复用、回执解析、跨域回退）有单元测试覆盖

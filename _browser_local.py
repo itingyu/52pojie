@@ -1,42 +1,29 @@
 # -*- coding: utf-8 -*-
-"""本地浏览器传输层：用 Selenium 驱动本机浏览器，页内 fetch 取数。
+"""本机浏览器传输层：用 Playwright 驱动系统已装的浏览器，页内 fetch 取数。
 
-与 App 内 WebView 后端（_browser.py）同构：同一个页内 fetch 脚本、
-同一套 base64 回传，区别只在于"谁来执行这个脚本"——
-这里是本机 Chrome / Edge / Brave / Firefox，登录态由浏览器自己的
-profile 携带，客户端同样不落 cookie。
+为什么不用 Selenium：
+- Selenium 需要 chromedriver，且驱动大版本必须与浏览器一致；Selenium Manager
+  要联网去 googlechromelabs.github.io 抓版本，国内基本连不上，还会把驱动
+  下载到当前工作目录污染代码仓库。
+- Playwright 可以直接用系统已安装的浏览器（executable_path 指向真实 exe），
+  不需要下载任何浏览器或驱动，也不产生额外文件。
 
-桌面端（Windows / macOS / Linux）没有 Minis App 的 WebView 可借，
-用这套后端，-b 就能跨平台生效。
+浏览器选择：读 Windows 注册表 UserChoice 的 ProgId，再顺着
+HKCR\\<ProgId>\\shell\\open\\command 找到用户真正在用的那个 exe。
+同一台机器可能装着多个 Chrome（不同盘/不同版本），只有走这一层才对。
 """
+
 import base64
 import json
 import os
 import shutil
 import subprocess
 import sys
-import time
 import urllib.parse
 
 
 class LocalBrowserError(RuntimeError):
     pass
-
-
-class _BrowserResponse:
-    """与 _browser.BrowserResponse 同构的最小响应对象。"""
-
-    def __init__(self, status_code, content, headers=None):
-        self.status_code = status_code
-        self.content = content
-        self.headers = headers or {}
-
-    @property
-    def text(self):
-        return self.content.decode("utf-8", "replace")
-
-    def __repr__(self):
-        return "<Response %d %d bytes>" % (self.status_code, len(self.content))
 
 
 def _same_host(url, base):
@@ -52,15 +39,13 @@ def _same_host(url, base):
 BROWSER_PATHS = {
     "chrome": [
         r"Google\Chrome\Application\chrome.exe",
-        r"Chromium\Application\chrome.exe",
-        r"Google\Chrome for Testing\chrome.exe",
+        r"Chromium\Application\chromium.exe",
     ],
     "edge": [r"Microsoft\Edge\Application\msedge.exe"],
     "firefox": [r"Mozilla Firefox\firefox.exe"],
     "brave": [r"BraveSoftware\Brave-Browser\Application\brave.exe"],
 }
 
-# 找不到时的候选启动名
 BROWSER_BIN = {
     "chrome": ["google-chrome", "google-chrome-stable", "chromium",
                "chromium-browser", "chrome"],
@@ -70,22 +55,84 @@ BROWSER_BIN = {
 }
 
 
-def _default_browser_key():
-    """读系统默认浏览器（Windows 用 UCRT / Linux 用 xdg）。"""
-    if sys.platform.startswith("win"):
+def _prog_id():
+    """Windows 当前用户设置的默认 https 浏览器 ProgId。"""
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"SOFTWARE\Microsoft\Windows\Shell\Associations"
+                r"\UrlAssociations\https\UserChoice") as k:
+            prog, _ = winreg.QueryValueEx(k, "ProgId")
+        return prog
+    except Exception:
+        return None
+
+
+def _prog_id_exe(prog_id):
+    """ProgId -> 实际可执行文件路径。
+
+    UserChoice 的 ProgId 只说明「是哪家浏览器」，真正指向哪个 exe 要查
+    HKCR 下的 ProgId shell open command。同机可能装有多个 Chrome
+    （不同盘、不同版本），只有走这一层才能拿到用户真正在用的那个。
+    """
+    if not prog_id:
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    bs = chr(92)
+    sub = prog_id + bs + "shell" + bs + "open" + bs + "command"
+    cls = "SOFTWARE" + bs + "Classes" + bs
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         try:
-            import winreg
-            with winreg.OpenKey(
-                    winreg.HKEY_CURRENT_USER,
-                    r"SOFTWARE\Microsoft\Windows\Shell\Associations"
-                    r"\UrlAssociations\https\UserChoice") as k:
-                prog, _ = winreg.QueryValueEx(k, "ProgId")
-            p = prog.lower()
-            for key in ("brave", "edge", "chrome", "firefox"):
-                if key in p:
-                    return key
-        except Exception:
-            pass
+            with winreg.OpenKey(hive, cls + sub) as k:
+                cmd, _ = winreg.QueryValueEx(k, None)
+            if cmd:
+                exe = cmd.split('"')[1] if '"' in cmd else cmd.split()[0]
+                if os.path.exists(exe):
+                    return exe
+        except OSError:
+            continue
+    return None
+
+
+def _browser_key_of(path):
+    """由可执行文件路径反推浏览器类型 key。"""
+    name = os.path.basename(path or "").lower()
+    table = {
+        "chrome.exe": "chrome", "msedge.exe": "edge",
+        "firefox.exe": "firefox", "brave.exe": "brave",
+    }
+    if name in table:
+        return table[name]
+    if "firefox" in name:
+        return "firefox"
+    if "msedge" in name or "edge" in name:
+        return "edge"
+    if "brave" in name:
+        return "brave"
+    if "chrome" in name or "chromium" in name:
+        return "chrome"
+    return None
+
+
+def _default_browser_key():
+    """系统默认浏览器类型（Windows 用注册表 / Linux 用 xdg）。"""
+    if sys.platform.startswith("win"):
+        prog = _prog_id()
+        exe = _prog_id_exe(prog)
+        if exe:
+            key = _browser_key_of(exe)
+            if key:
+                return key
+        p = (prog or "").lower()
+        for key in ("brave", "edge", "chrome", "firefox"):
+            if key in p:
+                return key
     else:
         try:
             out = subprocess.run(
@@ -102,7 +149,6 @@ def _default_browser_key():
 
 def find_browsers():
     """检测本机可用浏览器，返回 [(key, 路径)]，系统默认浏览器排最前。"""
-    import shutil
     found = []
     seen = set()
 
@@ -115,24 +161,22 @@ def find_browsers():
         seen.add(path.lower())
         found.append((key, path))
 
-    # 1) Windows 注册表 App Paths（能装在自定义盘符的浏览器）
+    # 1) Windows 注册表 App Paths（能发现装在自定义盘符的浏览器）
     if sys.platform.startswith("win"):
         try:
             import winreg
+            names = {"chrome.exe": "chrome", "msedge.exe": "edge",
+                     "firefox.exe": "firefox", "brave.exe": "brave"}
             for scope in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-                for key in ("chrome.exe", "msedge.exe", "firefox.exe",
-                            "brave.exe"):
+                for exe_name, key in names.items():
                     try:
                         with winreg.OpenKey(
                                 scope,
                                 r"SOFTWARE\Microsoft\Windows\CurrentVersion"
-                                r"\App Paths\%s" % key) as k:
+                                r"\App Paths\%s" % exe_name) as k:
                             val, _ = winreg.QueryValueEx(k, None)
-                            if val:
-                                add({"chrome.exe": "chrome",
-                                     "msedge.exe": "edge",
-                                     "firefox.exe": "firefox",
-                                     "brave.exe": "brave"}[key], val)
+                        if val:
+                            add(key, val)
                     except OSError:
                         continue
         except ImportError:
@@ -158,62 +202,33 @@ def find_browsers():
                 add(key, exe)
                 break
 
-    # 系统默认浏览器提前
-    pref = _default_browser_key()
+    # 系统默认浏览器提前（用注册表真实路径，避免选到另一个版本的 Chrome）
+    pref = default_browser()
     if pref:
-        found.sort(key=lambda kv: 0 if kv[0] == pref else 1)
+        pkey, ppath = pref
+        found.sort(key=lambda kv: 0 if (kv[0] == pkey
+                                       and kv[1].lower() == ppath.lower())
+                     else (1 if kv[0] != pkey else 2))
     return found
 
 
-# ---------------------------------------------------------------- 驱动构造
+def default_browser():
+    """系统默认浏览器的 (key, 路径)；取不到返回 None。
 
-def make_driver(browser_key, browser_path, profile_dir=None, proxy=None,
-                headless=False):
-    """按浏览器类型构造 selenium driver（Chrome 系共用 --user-data-dir）。"""
-    from selenium import webdriver
-    if browser_key == "firefox":
-        opts = webdriver.FirefoxOptions()
-        if headless:
-            opts.add_argument("-headless")
-        if proxy:
-            opts.add_argument("--proxy-server=%s" % proxy)
-        if profile_dir:
-            opts.add_argument("-profile")
-            opts.add_argument(profile_dir)
-        return webdriver.Firefox(options=opts)
-    if browser_key == "edge":
-        opts = webdriver.EdgeOptions()
-    else:
-        opts = webdriver.ChromeOptions()
-    if browser_path:
-        opts.binary_location = browser_path
-    if headless:
-        opts.add_argument("--headless=new")
-    if profile_dir:
-        opts.add_argument("--user-data-dir=%s" % profile_dir)
-    if proxy:
-        opts.add_argument("--proxy-server=%s" % proxy)
-    if hasattr(os, "geteuid") and os.geteuid() == 0:
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--no-first-run")
-    opts.add_argument("--no-default-browser-check")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    # 本机已装 chromedriver 时直接用，免得 Selenium Manager 去网上抓版本
-    service = None
-    exe = shutil.which("chromedriver") or shutil.which("msedgedriver")
-    if exe:
-        try:
-            from selenium.webdriver.chrome.service import Service
-            service = Service(executable_path=exe)
-        except Exception:
-            service = None
-    if browser_key == "edge":
-        return webdriver.Edge(options=opts)
-    if service is not None:
-        return webdriver.Chrome(options=opts, service=service)
-    return webdriver.Chrome(options=opts)
+    优先用注册表 ProgId 指向的真实 exe —— 它才是用户双击链接时打开的那个。
+    """
+    if sys.platform.startswith("win"):
+        exe = _prog_id_exe(_prog_id())
+        if exe:
+            key = _browser_key_of(exe)
+            if key:
+                return key, exe
+    key = _default_browser_key()
+    if key:
+        for k, path in find_browsers():
+            if k == key:
+                return k, path
+    return None
 
 
 # ---------------------------------------------------------------- 会话
@@ -234,23 +249,36 @@ class LocalBrowserSession:
         self.headless = headless
         self.proxy = proxy
         self.headers = {}
-        self._drv = None
+        self._pw = None
+        self._ctx = None
+        self._page = None
         self._curl = None
         self._at_origin = False
 
     # -- 懒启动浏览器 --
     @property
-    def driver(self):
-        if self._drv is None:
-            self._drv = self._start()
-        return self._drv
+    def page(self):
+        if self._page is None:
+            self._page = self._start()
+        return self._page
+
+    def _launch_args(self):
+        args = []
+        if self.headless:
+            args.append("--headless=new")
+        if self.proxy:
+            args.append("--proxy-server=%s" % self.proxy)
+        args.append("--no-first-run")
+        args.append("--no-default-browser-check")
+        args.append("--disable-blink-features=AutomationControlled")
+        return args
 
     def _start(self):
         try:
-            import selenium  # noqa: F401
+            from playwright.sync_api import sync_playwright
         except ImportError:
             raise LocalBrowserError(
-                "需要 selenium：python -m pip install selenium")
+                "需要 playwright：python -m pip install playwright")
         key, path = self.browser_key, self.browser_path
         if not key or not path:
             browsers = find_browsers()
@@ -259,11 +287,28 @@ class LocalBrowserSession:
                     "未检测到 Chrome / Edge / Brave / Firefox，"
                     "请安装其一或改用默认传输层")
             key, path = browsers[0]
+        self.browser_key, self.browser_path = key, path
+        self._pw = sync_playwright().start()
         try:
-            return make_driver(key, path, self.profile_dir, self.proxy,
-                               self.headless)
+            # 用系统已装的浏览器（executable_path），不下载 playwright 自带浏览器
+            ctx = self._pw.chromium.launch_persistent_context(
+                self.profile_dir or _tmp_profile(),
+                executable_path=path,
+                headless=bool(self.headless),
+                args=self._launch_args(),
+                ignore_default_args=["--enable-automation"],
+                viewport=None,
+            )
         except Exception as exc:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
             raise LocalBrowserError("启动浏览器失败：%s" % exc)
+        self._ctx = ctx
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        return page
 
     @property
     def curl(self):
@@ -289,13 +334,13 @@ class LocalBrowserSession:
         ) % (json.dumps(url), json.dumps(method),
              json.dumps(body if body is not None else None))
 
-    # -- 保证浏览器停在本站，才能带同源 cookie --
     def _ensure_origin(self):
+        """保证浏览器停在本站，才能带同源 cookie。"""
         if self._at_origin:
             return
-        drv = self.driver
-        drv.get(self.base + "/")
-        time.sleep(1.5)
+        page = self.page
+        page.goto(self.base + "/", wait_until="domcontentloaded",
+                  timeout=self.timeout * 1000)
         self._at_origin = True
 
     def request(self, method="GET", url="", timeout=None, **kw):
@@ -309,13 +354,10 @@ class LocalBrowserSession:
             sep = "&" if "?" in url else "?"
             url = url + sep + urllib.parse.urlencode(params, doseq=True)
         self._ensure_origin()
-        drv = self.driver
+        page = self.page
         script = self._script(url, method, kw.get("data"))
         try:
-            text = drv.execute_async_script(
-                "var cb=arguments[arguments.length-1];"
-                "(async function(){" + script + "})()"
-                ".then(function(v){cb(v);},function(e){cb('ERR:'+e);});")
+            text = page.evaluate("(async () => {" + script + "})()")
         except Exception as exc:
             raise LocalBrowserError("浏览器执行失败：%s" % exc)
         text = (text or "").strip()
@@ -328,20 +370,119 @@ class LocalBrowserSession:
             status = int(parts[0].strip())
             ctype = parts[1].strip()
             content = base64.b64decode(parts[2].strip())
-        except Exception as exc:
-            raise LocalBrowserError("浏览器返回无法解析: %s" % exc)
-        return _BrowserResponse(status, content, {"content-type": ctype})
+        except Exception:
+            raise LocalBrowserError("浏览器返回无法解析: %s" % text[:200])
+        return _Response(status, ctype, content, self.headers)
 
     def get(self, url, **kw):
         return self.request("GET", url, **kw)
 
-    def post(self, url, **kw):
-        return self.request("POST", url, **kw)
-
     def close(self):
-        if self._drv is not None:
+        try:
+            if self._ctx is not None:
+                self._ctx.close()
+        except Exception:
+            pass
+        try:
+            if self._pw is not None:
+                self._pw.stop()
+        except Exception:
+            pass
+        self._ctx = self._pw = self._page = None
+
+
+class _Response:
+    """最小 Response 替身：只需 status/headers/content。"""
+
+    def __init__(self, status, ctype, content, headers=None):
+        self.status_code = status
+        self.headers = _Headers(ctype, headers or {})
+        self.content = content
+        self.text = content.decode("utf-8", "replace")
+
+    def json(self):
+        return json.loads(self.text)
+
+    @property
+    def ok(self):
+        return 200 <= self.status_code < 400
+
+
+class _Headers(dict):
+    def __init__(self, ctype, extra):
+        super().__init__(extra or {})
+        if ctype:
+            self["content-type"] = ctype
+
+
+def _tmp_profile():
+    """没有指定 profile 时用临时目录（不污染用户数据）。"""
+    import tempfile
+    return tempfile.mkdtemp(prefix="52pj-profile-")
+
+
+# ---------------------------------------------------------------- 人工登录
+
+def open_login_window(browser_key=None, browser_path=None, profile_dir=None,
+                      proxy=None, headless=False, timeout=300,
+                      on_poll=None):
+    """打开登录页，等用户手动登录。
+
+    on_poll: 每次轮询时调用，返回 True 表示登录完成（拿到 auth cookie）。
+    返回 (cookies, fingerprint)。
+    """
+    from playwright.sync_api import sync_playwright
+    key, path = browser_key, browser_path
+    if not key or not path:
+        browsers = find_browsers()
+        if not browsers:
+            raise LocalBrowserError("未检测到可用浏览器")
+        key, path = browsers[0]
+    args = ["--no-first-run", "--no-default-browser-check"]
+    if proxy:
+        args.append("--proxy-server=%s" % proxy)
+    if headless:
+        args.append("--headless=new")
+    pw = sync_playwright().start()
+    ctx = None
+    try:
+        ctx = pw.chromium.launch_persistent_context(
+            profile_dir or _tmp_profile(),
+            executable_path=path,
+            headless=bool(headless),
+            args=args,
+            ignore_default_args=["--enable-automation"],
+            viewport=None,
+        )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto("https://www.52pojie.cn/member.php?mod=logging&action=login",
+                  wait_until="domcontentloaded", timeout=60000)
+        cookies = []
+        deadline = __import__("time").time() + timeout
+        while __import__("time").time() < deadline:
+            __import__("time").sleep(2)
             try:
-                self._drv.quit()
+                cookies = ctx.cookies()
             except Exception:
-                pass
-            self._drv = None
+                continue
+            if on_poll:
+                if on_poll(cookies):
+                    break
+        try:
+            fingerprint = page.evaluate(
+                "var u=navigator.userAgentData;return {ua:navigator.userAgent,"
+                "brands:u?u.brands:null,platform:u?u.platform:null,"
+                "mobile:u?u.mobile:false,lang:navigator.language};")
+        except Exception:
+            fingerprint = {}
+        return cookies, fingerprint
+    finally:
+        try:
+            if ctx is not None:
+                ctx.close()
+        except Exception:
+            pass
+        try:
+            pw.stop()
+        except Exception:
+            pass

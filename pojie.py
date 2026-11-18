@@ -50,7 +50,7 @@ ERR = sys.stderr
 # --------------------------------------------------------------------------- #
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _store
-import _browser_local
+import _browser_local  # Playwright 版：本机浏览器传输层
 import _browser
 
 try:
@@ -61,6 +61,11 @@ except ImportError:  # 打包成单文件时把 _ui 的内容内联进来
         os.path.dirname(os.path.abspath(__file__)), "_ui.py"))
     _ui = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_ui)
+
+try:
+    import _enc
+except ImportError:  # pragma: no cover
+    _enc = None
 
 
 def soup_of(resp):
@@ -1525,90 +1530,93 @@ def login_form(cl, username, password, seccode_verify=None, answer=""):
     return ok, (msg or ("登录成功" if ok else "登录失败（未返回明确提示）"))
 
 
-def _solve_turnstile(drv, deadline):
+def _solve_turnstile(page, deadline):
     """尝试自动完成 Cloudflare Turnstile：点开验证框、必要时点 iframe 内复选框。"""
-    from selenium.webdriver.common.by import By
-    # 先点主文档上的“点击验证”
+    # 先点主文档上的「点击验证」
     for sel in ("[id^=grbg] .grcheck", ".grcheck", "[id^=grcontainer] button"):
         try:
-            drv.find_element(By.CSS_SELECTOR, sel).click()
+            page.click(sel, timeout=2000)
             info("已点击验证按钮，等待人机验证…")
             break
         except Exception:
             continue
     while time.time() < deadline:
         try:
-            span = drv.find_element(By.CSS_SELECTOR, "[id^=checkseccodeverify]")
-            if span.is_displayed():
+            if page.is_visible("[id^=checkseccodeverify]"):
                 return True
         except Exception:
             pass
-        frames = drv.find_elements(
-            By.CSS_SELECTOR, 'iframe[src*="challenges.cloudflare.com"]')
+        try:
+            frames = page.query_selector_all(
+                'iframe[src*="challenges.cloudflare.com"]')
+        except Exception:
+            frames = []
         if frames:
             try:
-                drv.switch_to.default_content()
-                drv.switch_to.frame(frames[0])
-                for sel in ("input[type=checkbox]", "label", ".cb-lb",
-                            "#challenge-stage", "body"):
-                    try:
-                        el = drv.find_element(By.CSS_SELECTOR, sel)
-                        drv.execute_script("arguments[0].click();", el)
-                        break
-                    except Exception:
-                        continue
+                frame = frames[0].content_frame()
+                if frame is not None:
+                    for sel in ("input[type=checkbox]", "label", ".cb-lb",
+                                "#challenge-stage", "body"):
+                        try:
+                            el = frame.query_selector(sel)
+                            if el is not None:
+                                el.click(timeout=1500)
+                                break
+                        except Exception:
+                            continue
             except Exception:
                 pass
-            finally:
-                try:
-                    drv.switch_to.default_content()
-                except Exception:
-                    pass
         time.sleep(1.5)
     return False
 
 
 def login_browser(username, password, timeout=180):
-    """用本机 Chrome 完成登录（Turnstile 需人工点一下），返回 cookie 列表。"""
+    """用本机浏览器完成登录（Turnstile 需人工点一下），返回 cookie 列表。
+
+    用 Playwright 驱动系统已装的浏览器，不下载浏览器、不需要 chromedriver。
+    """
     try:
-        from selenium import webdriver
-        from selenium.webdriver.common.by import By
+        from playwright.sync_api import sync_playwright
     except ImportError:
-        die("需要 selenium：pip install selenium"
+        die("需要 playwright：pip install playwright"
             "（或改用 --cookie 导入浏览器 Cookie）")
-    cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".selenium")
+    key, path = _browser_local.default_browser() or (None, None)
+    if not path:
+        browsers = _browser_local.find_browsers()
+        if not browsers:
+            die("未检测到可用浏览器")
+        key, path = browsers[0]
+    info("使用浏览器：%s (%s)" % (key, path))
+    info("正在打开登录页…请在弹出的窗口里点一下『点击验证』完成人机验证。")
+    pw = sync_playwright().start()
+    ctx = None
     try:
-        os.makedirs(cache, exist_ok=True)
-        os.environ.setdefault("SE_CACHE", cache)
-    except Exception:
-        pass
-    opts = webdriver.ChromeOptions()
-    opts.add_argument("--start-maximized")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_experimental_option("useAutomationExtension", False)
-    info("正在打开 Chrome 登录页…请在弹出的窗口里点一下‘点击验证’完成人机验证。")
-    drv = webdriver.Chrome(options=opts)
-    try:
-        drv.get(BASE + "/member.php?mod=logging&action=login")
+        ctx = pw.chromium.launch_persistent_context(
+            _browser_local._tmp_profile(),
+            executable_path=path,
+            headless=False,
+            args=["--no-first-run", "--no-default-browser-check",
+                  "--disable-blink-features=AutomationControlled"],
+            ignore_default_args=["--enable-automation"],
+            viewport=None,
+        )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(BASE + "/member.php?mod=logging&action=login",
+                  wait_until="domcontentloaded", timeout=60000)
         time.sleep(2)
-        u = drv.find_element(By.NAME, "username")
-        u.clear()
-        u.send_keys(username)
-        p = drv.find_element(By.NAME, "password")
-        p.clear()
-        p.send_keys(password)
+        page.fill('input[name="username"]', username)
+        page.fill('input[name="password"]', password)
         deadline = time.time() + timeout
-        verified = _solve_turnstile(drv, deadline)
+        verified = _solve_turnstile(page, deadline)
         if not verified:
             info("人机验证未自动通过，仍尝试提交（可稍后在浏览器里手动点一下）。")
         try:
-            drv.find_element(By.CSS_SELECTOR, "button[type=submit]").click()
+            page.click('button[type=submit]', timeout=5000)
         except Exception:
-            drv.find_element(By.NAME, "loginsubmit").click()
+            page.click('input[name="loginsubmit"]', timeout=5000)
         time.sleep(4)
-        cookies = drv.get_cookies()
-        html = drv.page_source
+        cookies = ctx.cookies()
+        html = page.content()
         logged = any((c["name"] == "auth" or c["name"].endswith("_auth")) and
                      c.get("value") for c in cookies)
         if not logged and re.search(r"欢迎您|登出", html):
@@ -1618,7 +1626,12 @@ def login_browser(username, password, timeout=180):
         return cookies, "登录成功"
     finally:
         try:
-            drv.quit()
+            if ctx is not None:
+                ctx.close()
+        except Exception:
+            pass
+        try:
+            pw.stop()
         except Exception:
             pass
 
@@ -1749,16 +1762,21 @@ def paste_cookie_login(cl, prompt_hint=True):
 
 
 def cmd_auth(args, cl):
-    """打开本机浏览器，人工登录后自动回收 cookie。"""
-    try:
-        import selenium  # noqa: F401
-    except ImportError:
-        die("需要 selenium：pip install selenium")
+    """打开本机浏览器，人工登录后自动回收 cookie。
 
-    browsers = _browser_local.find_browsers()
+    用 Playwright 驱动系统已装的浏览器（不下载浏览器、不需要 chromedriver），
+    浏览器取注册表里登记的系统默认浏览器。
+    """
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        die("需要 playwright：pip install playwright")
+
     if getattr(args, "paste", False):
         return paste_cookie_login(cl)
+
     info("检测方式：注册表 App Paths → 常见安装目录 → PATH，结果：")
+    browsers = _browser_local.find_browsers()
     for k, p in browsers:
         info("  [%s] %s" % (k, p))
     if not browsers:
@@ -1774,23 +1792,21 @@ def cmd_auth(args, cl):
         if not chosen:
             die("未找到指定浏览器：%s" % args.browser)
     else:
-        prefer = ["chrome", "edge", "brave", "firefox"]
-        for want in prefer:
-            for k, p in browsers:
-                if k == want:
-                    chosen = (k, p)
+        # 系统默认浏览器优先（注册表 ProgId 指向的那个真实 exe）
+        pref = _browser_local.default_browser()
+        if pref:
+            chosen = pref
+        else:
+            for want in ("chrome", "edge", "brave", "firefox"):
+                for k, p in browsers:
+                    if k == want:
+                        chosen = (k, p)
+                        break
+                if chosen:
                     break
-            if chosen:
-                break
     key, path = chosen
     info("使用浏览器：%s (%s)" % (key, path))
 
-    cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".selenium")
-    try:
-        os.makedirs(cache, exist_ok=True)
-        os.environ.setdefault("SE_CACHE", cache)
-    except Exception:
-        pass
     # 与传输层共用同一 profile，登录态才能被 -b 复用
     profile = browser_profile_dir(cl.home)
     try:
@@ -1799,58 +1815,38 @@ def cmd_auth(args, cl):
         profile = None
 
     info("正在打开浏览器登录页，请在窗口里自行完成登录（含人机验证）…")
-    drv = _browser_local.make_driver(key, path, profile,
-                                    proxy=args.proxy)
+    deadline = time.time() + args.timeout
+
+    def _has_auth(cookies):
+        for c in cookies:
+            if (c.get("name") == "auth"
+                    or str(c.get("name", "")).endswith("_auth")) and \
+                    c.get("value"):
+                return True
+        return False
+
+    cookies = []
+    fp = {}
     try:
-        drv.get(BASE + "/member.php?mod=logging&action=login")
-        deadline = time.time() + args.timeout
-        auth = None
-        while time.time() < deadline:
-            time.sleep(2)
-            try:
-                cookies = drv.get_cookies()
-            except Exception:
-                continue
-            for c in cookies:
-                if (c["name"] == "auth" or c["name"].endswith("_auth")) and \
-                        c.get("value"):
-                    auth = c
-                    break
-            if auth:
-                break
-        if not auth:
-            die("等待超时（%d 秒）未检测到登录态。可加大 --timeout，"
-                "或改用 52pj login --cookie \"<Cookie 串>\" 导入。" % args.timeout)
-        for c in drv.get_cookies():
+        cookies, fp = _browser_local.open_login_window(
+            browser_key=key, browser_path=path, profile_dir=profile,
+            proxy=args.proxy, timeout=args.timeout, on_poll=_has_auth)
+    except Exception as exc:
+        die("登录窗口失败：%s" % exc)
+    if not _has_auth(cookies):
+        die("等待超时（%d 秒）未检测到登录态。可加大 --timeout，"
+            "或改用 52pj login --cookie \"<Cookie 串>\" 导入。" % args.timeout)
+    for c in cookies:
+        try:
             cl.s.cookies.set(c["name"], c["value"], domain=c.get("domain"),
                              path=c.get("path", "/"))
-        try:
-            fp = drv.execute_script(
-                "var u=navigator.userAgentData;return {ua:navigator.userAgent,"
-                "brands:u?u.brands:null,platform:u?u.platform:null,"
-                "mobile:u?u.mobile:false,lang:navigator.language};")
         except Exception:
-            fp = {}
-        cl.save_cookies(ua=fp.get("ua"), fingerprint=fp)
-        info("已获取登录态并保存到：%s" % cl.cookie_file)
-        if not args.keep_open:
             pass
-    finally:
-        if not args.keep_open:
-            try:
-                drv.quit()
-            except Exception:
-                pass
-        else:
-            info("浏览器保持打开（--keep-open），按 Ctrl+C 结束。")
-    who = cl.logged_in()
-    print("登录成功" + ("：%s" % who if who else ""))
+    cl.save_cookies(ua=fp.get("ua"), fingerprint=fp)
+    info("已获取登录态并保存到：%s" % cl.cookie_file)
     return 0
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
 def check_deps(need_bs4=True):
     """检查运行依赖，缺了就提示用 setup 安装。"""
     missing = []
@@ -1867,7 +1863,7 @@ def cmd_setup(args, cl):
     import subprocess
     pkgs = ["curl_cffi", "beautifulsoup4"]
     if getattr(args, "with_selenium", False):
-        pkgs.append("selenium")
+        pkgs.append("playwright")
     mirrors = [("国内镜像", ["-i", "https://pypi.tuna.tsinghua.edu.cn/simple"]),
                ("官方源", [])]
     for label, extra in mirrors:
@@ -2067,7 +2063,29 @@ def build_parser():
     return p
 
 
+def _setup_encoding():
+    """按终端实际能力配置 stdout/stderr 编码，避免中文乱码。
+
+    可用 52PJ_ENCODING 环境变量强制：utf-8 / native / gbk。
+    """
+    if _enc is None:
+        return
+    want = os.environ.get("52PJ_ENCODING", "").strip().lower() or None
+    if want not in ("utf-8", "utf8", "native", "gbk", "gb2312"):
+        want = None
+    try:
+        _enc.setup(force=want)
+        try:
+            sys.stderr.reconfigure(encoding=sys.stdout.encoding,
+                                   errors="replace")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def main(argv=None):
+    _setup_encoding()
     argv = sys.argv[1:] if argv is None else list(argv)
     # --color 允许写在子命令后面
     _argv = [a for a in argv if a not in ("--color", "--no-color")]

@@ -64,8 +64,9 @@ cookie 存在 `~/.52pj/52pj.db`（SQLite，明文）。
 
 - Android（Minis App 内）：借 App 里已登录的 WebView，App 的 HttpOnly cookie 自动带上。
   **App 未登录时 `-b` 也是游客态**，跟不加 `-b` 没区别。
-- 桌面端：Selenium 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj setup --with-selenium` 装依赖，`52pj auth` 登录一次即可复用。
-  这条路径有单元测试覆盖，但**没在真实桌面环境端到端验证过**（开发环境是 Android 沙箱，Chromium 起不来）；首次使用先用 `52pj -b whoami` 确认能通。
+- 桌面端：Playwright 驱动本机浏览器（Chrome/Edge/Brave/Firefox），`52pj setup --with-selenium` 装依赖，`52pj auth` 登录一次即可复用。
+  用系统已安装的浏览器（读注册表 UserChoice 定位真实 exe），不下载浏览器、不需要 chromedriver。
+  这条路径已在真实 Windows 桌面环境端到端验证过（`-b whoami` / `-b forums` / `-b threads` 均正常）。
 
 不加 `-b` 就是默认的本地直连（curl 指纹，只带本地 cookie 库里的 cookie）。
 

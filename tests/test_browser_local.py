@@ -13,8 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import _browser_local as bl   # noqa: E402
 
 
-class FakeDriver:
-    """模拟 selenium driver：记录脚本，按脚本里的 url 返回预置回执。"""
+class FakePage:
+    """模拟 playwright page：记录脚本，按脚本里的 url 返回预置回执。"""
 
     def __init__(self, payload=b"hello", status=200, ctype="text/html"):
         self.payload = payload
@@ -23,23 +23,23 @@ class FakeDriver:
         self.calls = []
         self.pages = []
 
-    def get(self, url):
+    def goto(self, url, **kw):
         self.pages.append(url)
 
-    def execute_async_script(self, script, *args):
+    def evaluate(self, script, *args):
         self.calls.append(script)
         b64 = base64.b64encode(self.payload).decode()
         return "%d\n%s\n%s" % (self.status, self.ctype, b64)
 
-    def quit(self):
+    def close(self):
         pass
 
 
 def test_response_parsing():
     s = bl.LocalBrowserSession("https://www.52pojie.cn")
-    fake = FakeDriver("中文页面内容".encode("gbk"), 200,
+    fake = FakePage("中文页面内容".encode("gbk"), 200,
                       "text/html; charset=gbk")
-    s._drv = fake
+    s._page = fake
     s._at_origin = True
     r = s.get("/forum-10-1.html")
     assert r.status_code == 200, r.status_code
@@ -51,8 +51,8 @@ def test_response_parsing():
 def test_origin_navigation():
     """请求前必须先停在本站，否则同源 cookie 带不上。"""
     s = bl.LocalBrowserSession("https://www.52pojie.cn")
-    fake = FakeDriver()
-    s._drv = fake
+    fake = FakePage()
+    s._page = fake
     s.get("/forum-10-1.html")
     assert fake.pages and fake.pages[0].startswith("https://www.52pojie.cn"), fake.pages
     print("2) 先落本站: OK")
@@ -60,8 +60,8 @@ def test_origin_navigation():
 
 def test_params_merged():
     s = bl.LocalBrowserSession("https://www.52pojie.cn")
-    fake = FakeDriver()
-    s._drv = fake
+    fake = FakePage()
+    s._page = fake
     s._at_origin = True
     s.get("/forum.php", params={"mod": "forumdisplay", "fid": "10"})
     assert "mod=forumdisplay" in fake.calls[0], fake.calls[0][:200]
@@ -72,8 +72,8 @@ def test_params_merged():
 def test_cross_host_fallback():
     """跨域请求不能走页内 fetch，应回退 curl 会话。"""
     s = bl.LocalBrowserSession("https://www.52pojie.cn")
-    fake = FakeDriver()
-    s._drv = fake
+    fake = FakePage()
+    s._page = fake
     s._at_origin = True
     called = {}
 
@@ -95,7 +95,8 @@ def test_profile_shared_with_auth():
     import pojie
     d = pojie.browser_profile_dir("/tmp/home-x")
     assert d.endswith(os.path.join("home-x", "browser-profile")), d
-    assert os.path.join(d, "x") == pojie.browser_profile_dir("/tmp/home-x") + "/x"
+    assert os.path.join(d, "x") == os.path.join(
+        pojie.browser_profile_dir("/tmp/home-x"), "x")
     print("5) profile 目录共享: OK")
 
 
